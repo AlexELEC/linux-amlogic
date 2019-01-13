@@ -82,6 +82,7 @@ static struct proc_dir_entry *proc_antoverload;
 #define PROCREG_ANT_POWER	"antoverload"
 static int set_ant_power = 0; /* default is off */
 #endif
+extern void dmx_reset_dmx_sw(void);
 
 static struct aml_fe avl6862_fe[FE_DEV_COUNT];
 
@@ -219,6 +220,7 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 
 	avl6862_gpio();
 	avl6862_Reset();
+
 	fe->fe = dvb_attach(avl6862_attach, &avl6862_config, i2c_handle);
 
 	if (!fe->fe) {
@@ -290,6 +292,7 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 
 tun_board_end:
 	pr_inf("Frontend AVL6862 registred!\n");
+	dmx_reset_dmx_sw();
 
 	return 0;
 

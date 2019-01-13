@@ -103,7 +103,7 @@ int avl6862_Reset(void)
 	msleep(600);
 	gpio_request(frontend_reset,device_name);
 	gpio_direction_output(frontend_reset, 1);
-	msleep(200);
+	msleep(600);
 
 	return 0;
 }
@@ -200,8 +200,8 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 		goto err_resource;
 	}
 
-	avl6862_Reset();
 	avl6862_gpio();
+	avl6862_Reset();
 	fe->fe = dvb_attach(avl6862_attach, &avl6862_config, i2c_handle);
 
 	if (!fe->fe) {

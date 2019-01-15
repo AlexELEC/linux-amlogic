@@ -3436,14 +3436,10 @@ int aml_asyncfifo_hw_init(struct aml_asyncfifo *afifo)
 		return -1;
 
 	/*Async FIFO initialize*/
-/*
-	spin_lock_irqsave(&dvb->slock, flags);
-*/
-/*
-#if MESON_CPU_TYPE >= MESON_CPU_TYPE_MESON8
-	CLK_GATE_ON(ASYNC_FIFO);
-#endif
-*/
+
+	afifo->init = 0;
+	afifo->flush_size = ASYNCFIFO_BUFFER_SIZE_DEFAULT / 32;
+
 	/*afifo_reset(0);*/
 
 	WRITE_MPEG_REG(RESET6_REGISTER, (1<<11)|(1<<12));

@@ -124,12 +124,10 @@ int avl6862_gpio(void)
 {
 	pr_dbg("avl6862_gpio!\n");
 
-#if !defined(CONFIG_PROC_FS)
 	if(frontend_antoverload >= 0) {
 		gpio_request(frontend_antoverload,device_name);
-		gpio_direction_output(frontend_antoverload, 1);
+		gpio_direction_output(frontend_antoverload, 0);
 	}
-#endif
 
 	return 0;
 }

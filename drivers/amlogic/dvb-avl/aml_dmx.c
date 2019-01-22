@@ -3583,6 +3583,7 @@ int aml_dmx_hw_start_feed(struct dvb_demux_feed *dvbdmxfeed)
 
 	if (!dmx->channel[SYS_CHAN_COUNT].used) {
 		dvbdmxfeed->pid = XPID;
+		dvbdmxfeed->priv = (void *)SYS_CHAN_COUNT;
 		ret = dmx_add_feed(dmx, dvbdmxfeed);
 	}
 	if (pid != XPID) {

@@ -2891,8 +2891,18 @@ int dmx_alloc_chan(struct aml_dmx *dmx, int type, int pes_type, int pid)
 	}
 
 	if (id == -1) {
-		pr_error("too many channels\n");
-		return -1;
+		int i;
+		for (i = 0; i < CHANNEL_COUNT; i++) {
+			if (dmx->channel[i].pid == pid) {
+				dmx_free_chan(dmx, i);
+				id = i;
+				break;
+			}
+		}
+		if (id == -1) {
+			pr_error("too many channels\n");
+			return -1;
+		}
 	}
 
 	pr_dbg("allocate channel(id:%d PID:%d)\n", id, pid);

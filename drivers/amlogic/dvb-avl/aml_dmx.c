@@ -3493,7 +3493,7 @@ int aml_asyncfifo_hw_init(struct aml_asyncfifo *afifo)
 	/*Async FIFO initialize*/
 
 	afifo->init = 0;
-	afifo->flush_size = ASYNCFIFO_BUFFER_SIZE_DEFAULT / 32;
+	afifo->flush_size = ASYNCFIFO_BUFFER_SIZE_DEFAULT / 64;
 
 	/*afifo_reset(0);*/
 
@@ -3560,7 +3560,7 @@ int aml_asyncfifo_hw_reset(struct aml_asyncfifo *afifo)
 
 	return ret;
 }
-#define XPID 8191
+
 int aml_dmx_hw_start_feed(struct dvb_demux_feed *dvbdmxfeed)
 {
 	struct aml_dmx *dmx = (struct aml_dmx *)dvbdmxfeed->demux;
@@ -3569,16 +3569,7 @@ int aml_dmx_hw_start_feed(struct dvb_demux_feed *dvbdmxfeed)
 	int ret = 0, pid = dvbdmxfeed->pid;
 
 	spin_lock_irqsave(&dvb->slock, flags);
-
-	if (!dmx->channel[SYS_CHAN_COUNT].used) {
-		dvbdmxfeed->pid = XPID;
-		dvbdmxfeed->priv = (void *)SYS_CHAN_COUNT;
-		ret = dmx_add_feed(dmx, dvbdmxfeed);
-	}
-	if (pid != XPID) {
-		dvbdmxfeed->pid = pid;
-		ret = dmx_add_feed(dmx, dvbdmxfeed);
-	}
+	ret = dmx_add_feed(dmx, dvbdmxfeed);
 	spin_unlock_irqrestore(&dvb->slock, flags);
 
 	return ret;
@@ -3591,14 +3582,7 @@ int aml_dmx_hw_stop_feed(struct dvb_demux_feed *dvbdmxfeed)
 	unsigned long flags;
 
 	spin_lock_irqsave(&dvb->slock, flags);
-	if (dvbdmxfeed->pid != XPID)
-		dmx_remove_feed(dmx, dvbdmxfeed);
-	
-	if (dmx->channel[SYS_CHAN_COUNT].used) {
-		dvbdmxfeed->pid = XPID;
-		dvbdmxfeed->priv = (void *)SYS_CHAN_COUNT; 
-		dmx_remove_feed(dmx, dvbdmxfeed);
-	}
+	dmx_remove_feed(dmx, dvbdmxfeed);
 	spin_unlock_irqrestore(&dvb->slock, flags);
 
 	return 0;

@@ -322,18 +322,6 @@ static int tsfile_clkdiv = 4;
 #define dmx_get_dev(dmx) (((struct aml_dvb *)((dmx)->demux.priv))->dev)
 #define asyncfifo_get_dev(afifo) ((afifo)->dvb->dev)
 
-void dmx_reset_dmx_id_hw_ex_unlock(struct aml_dvb *dvb, int id, int reset_irq);
-
-static void dmx_reset_dmx_id_hw_resume(struct aml_dmx *dmx)
-{
-	struct aml_dvb *dvb = (struct aml_dvb *)dmx->demux.priv;
-	int i;
-
-	for (i = 0; i < DMX_DEV_COUNT; i++) {
-		dmx_reset_dmx_id_hw_ex_unlock(dvb, i, 0);
-	}
-}
-
 /*Section buffer watchdog*/
 static void section_buffer_watchdog_func(unsigned long arg)
 {
@@ -470,6 +458,7 @@ static int section_crc(struct aml_dmx *dmx, struct aml_filter *f, u8 *p)
 {
 	int sec_len = (((p[1] & 0xF) << 8) | p[2]) + 3;
 	struct dvb_demux_feed *feed = dmx->channel[f->chan_id].feed;
+	struct aml_dvb *dvb = (struct aml_dvb *)dmx->demux.priv;
 
 	if (feed->feed.sec.check_crc) {
 		struct dvb_demux *demux = feed->demux;
@@ -481,7 +470,7 @@ static int section_crc(struct aml_dmx *dmx, struct aml_filter *f, u8 *p)
 		sec->crc_val = ~0;
 		if (demux->check_crc32(feed, p, sec_len)) {
 			pr_error("section CRC check failed!\n");
-			dmx_reset_dmx_id_hw_resume(dmx);
+			dmx_reset_dmx_hw_ex_unlock(dvb, dmx, 0);
 			return 0;
 		}
 	}

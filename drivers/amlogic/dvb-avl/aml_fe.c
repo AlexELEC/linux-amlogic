@@ -62,6 +62,10 @@ MODULE_PARM_DESC(debug_fe, "\n\t\t Enable frontend debug information");
 static int debug_fe;
 module_param(debug_fe, int, 0644);
 
+MODULE_PARM_DESC(frontend_power, "\n\t\t Power GPIO of frontend");
+static int frontend_power = -1;
+module_param(frontend_power, int, 0644);
+
 MODULE_PARM_DESC(frontend_reset, "\n\t\t Reset GPIO of frontend");
 static int frontend_reset = -1;
 module_param(frontend_reset, int, 0644);
@@ -124,6 +128,11 @@ int avl6862_gpio(void)
 {
 	pr_dbg("avl6862_gpio!\n");
 
+	if(frontend_power >= 0) {
+		gpio_request(frontend_power,device_name);
+		gpio_direction_output(frontend_power, 1);
+	}
+
 	if(frontend_antoverload >= 0) {
 		gpio_request(frontend_antoverload,device_name);
 		gpio_direction_output(frontend_antoverload, 0);
@@ -141,7 +150,7 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 	const char *str;
 #ifdef CONFIG_ARM64
         struct gpio_desc *desc;
-	int gpio_reset, gpio_antoverload;
+	int gpio_reset, gpio_power, gpio_antoverload;
 #endif
 #endif
 
@@ -173,6 +182,13 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 	} else
 		gpio_reset = -1;
 
+	desc = of_get_named_gpiod_flags(pdev->dev.of_node, "dtv_demod0_power_gpio-gpios", 0, NULL);
+	if (!PTR_RET(desc)) {
+		gpio_power = desc_to_gpio(desc);
+		pr_dbg("gpio_power=%d\n", gpio_power);
+	} else
+		gpio_power = -1;
+
 	desc = of_get_named_gpiod_flags(pdev->dev.of_node, "dtv_demod0_antoverload_gpio-gpios", 0, NULL);
 	if (!PTR_RET(desc)) {
 		gpio_antoverload = desc_to_gpio(desc);
@@ -188,6 +204,7 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
         }*/
 
 	frontend_reset = gpio_reset;
+	frontend_power = gpio_power;
 	frontend_antoverload = gpio_antoverload;
 #endif /*CONFIG_OF*/
 

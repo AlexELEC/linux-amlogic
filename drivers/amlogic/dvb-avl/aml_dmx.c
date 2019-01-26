@@ -56,7 +56,6 @@
 #define pr_dbg_irq_dvr(fmt, args...)pr_dbg_irq_flag(0x2, fmt, ## args)
 #define pr_dbg_irq_sf(fmt, args...) pr_dbg_irq_flag(0x4, fmt, ## args)
 #define pr_dbg_irq_ss(fmt, args...) pr_dbg_irq_flag(0x8, fmt, ## args)
-#define pr_dbg_irq_pes(fmt, args...) pr_dbg_irq_flag(0x10, fmt, ## args)
 
 #define pr_error(fmt, args...) printk("DMX: " fmt, ## args)
 #define pr_inf(fmt, args...)  printk("DMX: " fmt, ## args)
@@ -274,7 +273,7 @@ static void dmxn_op_chan(int dmx, int ch, int(*op)(int, int), int ch_op)
 #define DEMUX_INT_MASK\
 			((0<<(AUDIO_SPLICING_POINT))    |\
 			(0<<(VIDEO_SPLICING_POINT))     |\
-			(1<<(OTHER_PES_READY))          |\
+			(0<<(OTHER_PES_READY))          |\
 			(1<<(SUB_PES_READY))            |\
 			(1<<(SECTION_BUFFER_READY))     |\
 			(0<<(OM_CMD_READ_PENDING))      |\
@@ -741,6 +740,7 @@ static void process_smallsection(struct aml_dmx *dmx)
 	}
 }
 
+
 static void process_section(struct aml_dmx *dmx)
 {
 	u32 ready, i, sec_busy;
@@ -907,62 +907,6 @@ static void process_sub(struct aml_dmx *dmx)
 
 static void process_pes(struct aml_dmx *dmx)
 {
-	static long off, off_pre;
-	u8 *buffer1 = 0, *buffer2 = 0;
-	u8 *buffer1_phys = 0, *buffer2_phys = 0;
-	u32 len1 = 0, len2 = 0;
-	int i = 1;
-	off = (DMX_READ_REG(dmx->id, OB_PES_WR_PTR) << 3);
-
-	pr_dbg_irq_pes("[%d]WR:0x%x PES WR:0x%x\n", dmx->id,
-			DMX_READ_REG(dmx->id, OTHER_WR_PTR),
-			DMX_READ_REG(dmx->id, OB_PES_WR_PTR));
-	buffer1 = (u8 *)(dmx->pes_pages + off_pre);
-	pr_dbg_irq_pes("[%d]PES WR[%02x %02x %02x %02x %02x %02x %02x %02x",
-		dmx->id,
-		buffer1[0], buffer1[1], buffer1[2], buffer1[3],
-		buffer1[4], buffer1[5], buffer1[6], buffer1[7]);
-	pr_dbg_irq_pes(" %02x %02x %02x %02x %02x %02x %02x %02x]\n",
-			buffer1[8], buffer1[9], buffer1[10], buffer1[11],
-			buffer1[12], buffer1[13], buffer1[14], buffer1[15]);
-
-	if (off > off_pre) {
-		len1 = off-off_pre;
-		buffer1 = (unsigned char *)(dmx->pes_pages + off_pre);
-	} else if (off < off_pre) {
-		len1 = dmx->pes_buf_len-off_pre;
-		buffer1 = (unsigned char *)(dmx->pes_pages + off_pre);
-		len2 = off;
-		buffer2 = (unsigned char *)dmx->pes_pages;
-	} else if (off == off_pre) {
-		pr_dbg("pes no data\n");
-	}
-	off_pre = off;
-	if (len1) {
-		buffer1_phys = (unsigned char *)virt_to_phys(buffer1);
-		dma_sync_single_for_cpu(dmx_get_dev(dmx),
-			(dma_addr_t)buffer1_phys, len1, DMA_FROM_DEVICE);
-	}
-	if (len2) {
-		buffer2_phys = (unsigned char *)virt_to_phys(buffer2);
-		dma_sync_single_for_cpu(dmx_get_dev(dmx),
-			(dma_addr_t)buffer2_phys, len2, DMA_FROM_DEVICE);
-	}
-	if (len1 || len2) {
-		struct aml_channel *ch;
-		for (i = 0; i < CHANNEL_COUNT; i++) {
-			ch = &dmx->channel[i];
-			if (ch->used && ch->feed
-				&& (ch->feed->type == DMX_TYPE_TS)) {
-				if (ch->feed->ts_type & TS_PAYLOAD_ONLY) {
-					ch->feed->cb.ts(buffer1,
-						len1, buffer2, len2,
-						&ch->feed->feed.ts,
-						DMX_OK);
-				}
-			}
-		}
-	}
 }
 
 static void process_om_read(struct aml_dmx *dmx)
@@ -3493,7 +3437,7 @@ int aml_asyncfifo_hw_init(struct aml_asyncfifo *afifo)
 	/*Async FIFO initialize*/
 
 	afifo->init = 0;
-	afifo->flush_size = ASYNCFIFO_BUFFER_SIZE_DEFAULT / 64;
+	afifo->flush_size = ASYNCFIFO_BUFFER_SIZE_DEFAULT / 32;
 
 	/*afifo_reset(0);*/
 
@@ -3560,7 +3504,7 @@ int aml_asyncfifo_hw_reset(struct aml_asyncfifo *afifo)
 
 	return ret;
 }
-
+#define XPID 8191
 int aml_dmx_hw_start_feed(struct dvb_demux_feed *dvbdmxfeed)
 {
 	struct aml_dmx *dmx = (struct aml_dmx *)dvbdmxfeed->demux;
@@ -3569,7 +3513,16 @@ int aml_dmx_hw_start_feed(struct dvb_demux_feed *dvbdmxfeed)
 	int ret = 0, pid = dvbdmxfeed->pid;
 
 	spin_lock_irqsave(&dvb->slock, flags);
-	ret = dmx_add_feed(dmx, dvbdmxfeed);
+
+	if (!dmx->channel[SYS_CHAN_COUNT].used) {
+		dvbdmxfeed->pid = XPID;
+		dvbdmxfeed->priv = (void *)SYS_CHAN_COUNT;
+		ret = dmx_add_feed(dmx, dvbdmxfeed);
+	}
+	if (pid != XPID) {
+		dvbdmxfeed->pid = pid;
+		ret = dmx_add_feed(dmx, dvbdmxfeed);
+	}
 	spin_unlock_irqrestore(&dvb->slock, flags);
 
 	return ret;
@@ -3582,7 +3535,14 @@ int aml_dmx_hw_stop_feed(struct dvb_demux_feed *dvbdmxfeed)
 	unsigned long flags;
 
 	spin_lock_irqsave(&dvb->slock, flags);
-	dmx_remove_feed(dmx, dvbdmxfeed);
+	if (dvbdmxfeed->pid != XPID)
+		dmx_remove_feed(dmx, dvbdmxfeed);
+	
+	if (dmx->channel[SYS_CHAN_COUNT].used) {
+		dvbdmxfeed->pid = XPID;
+		dvbdmxfeed->priv = (void *)SYS_CHAN_COUNT; 
+		dmx_remove_feed(dmx, dvbdmxfeed);
+	}
 	spin_unlock_irqrestore(&dvb->slock, flags);
 
 	return 0;

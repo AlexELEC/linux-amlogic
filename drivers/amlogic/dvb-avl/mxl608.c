@@ -959,27 +959,25 @@ err:
 	return ret;
 }
 
+#ifndef DUAL_TUNER
 static int mxl608_get_frequency(struct dvb_frontend *fe, u32 *frequency)
 {
-#ifndef DUAL_TUNER
 	struct mxl608_state *state = fe->tuner_priv;
-#else
-	struct dual_tuner_priv *state = fe->tuner_priv;
-#endif
+
 	*frequency = state->frequency;
+
 	return 0;
 }
 
 static int mxl608_get_bandwidth(struct dvb_frontend *fe, u32 *bandwidth)
 {
-#ifndef DUAL_TUNER
 	struct mxl608_state *state = fe->tuner_priv;
-#else
-	struct dual_tuner_priv *state = fe->tuner_priv;
-#endif
+
 	*bandwidth = state->bandwidth;
+
 	return 0;
 }
+#endif
 
 #ifndef DUAL_TUNER
 static

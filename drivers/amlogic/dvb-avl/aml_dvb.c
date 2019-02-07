@@ -148,7 +148,7 @@ static int aml_dvb_dmx_init(struct aml_dvb *advb, struct aml_dmx *dmx, int id)
 	dmx->dvr_irq = -1;
 
 	dmx->demux.dmx.capabilities	= (DMX_TS_FILTERING | DMX_SECTION_FILTERING | DMX_MEMORY_BASED_FILTERING);
-	dmx->demux.filternum		= dmx->demux.feednum = FILTER_COUNT;
+	dmx->demux.filternum		= dmx->demux.feednum = FILTER_COUNT * 2; /* real table channels + ignore table channels */
 	dmx->demux.priv			= advb;
 	dmx->demux.start_feed		= aml_dmx_hw_start_feed;
 	dmx->demux.stop_feed		= aml_dmx_hw_stop_feed;
@@ -849,6 +849,7 @@ static const struct of_device_id aml_dvb_dt_match[]={
 };
 #endif /*CONFIG_OF*/
 
+#if 0
 /*Get the STB source demux*/
 static struct aml_dmx* get_stb_dmx(void)
 {
@@ -878,6 +879,7 @@ static struct aml_dmx* get_stb_dmx(void)
 
 	return dmx;
 }
+#endif
 
 #define DEMUX_RESET_FUNC_DECL(i)  \
 static ssize_t demux##i##_reset_store(struct class *class,  struct class_attribute *attr,const char *buf, size_t size)\

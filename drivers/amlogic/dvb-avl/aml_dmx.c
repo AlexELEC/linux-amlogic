@@ -1561,7 +1561,7 @@ static int _dmx_smallsec_enable(struct aml_smallsec *ss, int bufsize)
 	ss->bufsize = bufsize;
 	ss->enable = 1;
 
-	pr_inf("demux%d smallsec buf start: %lx, size: %d\n",
+	pr_dbg("demux%d smallsec buf start: %lx, size: %d\n",
 		ss->dmx->id, ss->buf, ss->bufsize);
 	return 0;
 }
@@ -1577,7 +1577,7 @@ static int _dmx_smallsec_disable(struct aml_smallsec *ss)
 		ss->buf_map = 0;
 	}
 	ss->enable = 0;
-	pr_inf("demux%d smallsec buf disable\n", ss->dmx->id);
+	pr_dbg("demux%d smallsec buf disable\n", ss->dmx->id);
 	return 0;
 }
 
@@ -1626,7 +1626,7 @@ static int _dmx_timeout_enable(struct aml_dmxtimeout *dto, int timeout,
 	dto->trigger = 0;
 	dto->enable = 1;
 
-	pr_inf("demux%d timeout enable:timeout(%d),ch(0x%x),match(%d)\n",
+	pr_dbg("demux%d timeout enable:timeout(%d),ch(0x%x),match(%d)\n",
 		dto->dmx->id, dto->timeout, dto->ch_disable, dto->match);
 
 	return 0;
@@ -1637,7 +1637,7 @@ static int _dmx_timeout_disable(struct aml_dmxtimeout *dto)
 	DMX_WRITE_REG(dto->dmx->id, DEMUX_INPUT_TIMEOUT, 0);
 	dto->enable = 0;
 	dto->trigger = 0;
-	pr_inf("demux%d timeout disable\n", dto->dmx->id);
+	pr_dbg("demux%d timeout disable\n", dto->dmx->id);
 
 	return 0;
 }
@@ -2788,13 +2788,19 @@ void dmx_reset_dmx_hw(struct aml_dvb *dvb, int id)
 	dmx_reset_dmx_id_hw_ex(dvb, id, 1);
 }
 
-void dmx_reset_dmx_sw(void)
+void dmx_reset_dmx_sw(int num) /* -1 - all */
 {
 	struct aml_dvb *dvb = aml_get_dvb_device();
 	int i;
 
-	for (i = 0; i < DMX_DEV_COUNT; i++)
-		dmx_reset_dmx_id_hw_ex(dvb, i, 0);
+	if(num < 0) {
+		for (i = 0; i < DMX_DEV_COUNT; i++)
+			dmx_reset_dmx_id_hw_ex(dvb, i, 0);
+		reset_async_fifos(dvb);
+	} else {
+		dmx_reset_dmx_id_hw_ex(dvb, num, 0);
+	}
+	msleep(150);
 }
 EXPORT_SYMBOL(dmx_reset_dmx_sw);
 
@@ -3504,15 +3510,40 @@ int aml_asyncfifo_hw_reset(struct aml_asyncfifo *afifo)
 
 	return ret;
 }
+
 #define XPID 8191
 int aml_dmx_hw_start_feed(struct dvb_demux_feed *dvbdmxfeed)
 {
 	struct aml_dmx *dmx = (struct aml_dmx *)dvbdmxfeed->demux;
 	struct aml_dvb *dvb = (struct aml_dvb *)dmx->demux.priv;
 	unsigned long flags;
-	int ret = 0, pid = dvbdmxfeed->pid;
+	int ret = 0, i, iid = -1, id = -1, pid = dvbdmxfeed->pid;
 
 	spin_lock_irqsave(&dvb->slock, flags);
+
+	for (i = SYS_CHAN_COUNT; i < CHANNEL_COUNT; i++) {
+		if (!dmx->channel[i].used) {
+			id = i;
+			break;
+		}
+	}
+	if (id < 0) {
+		for (i = 0; i < CHANNEL_COUNT; i++) {
+			if (!dmx->ch_ignore[i].used) {
+				iid = i;
+				dmx->ch_ignore[i].used = 1;
+				dmx->ch_ignore[i].pid = pid;
+				dmx->ch_ignore[i].type = dvbdmxfeed->type;
+				dmx->ch_ignore[i].pes_type = dvbdmxfeed->pes_type;
+				break;
+			}
+		}
+	}
+
+	if (iid >= 0) {
+		pr_dbg("%s: %02d. PID[%02d] %d(0x%04X) add in ignore table channels.\n", __func__, iid, dvbdmxfeed->type, pid, pid);
+		goto skip;
+	}
 
 	if (!dmx->channel[SYS_CHAN_COUNT].used) {
 		dvbdmxfeed->pid = XPID;
@@ -3523,6 +3554,7 @@ int aml_dmx_hw_start_feed(struct dvb_demux_feed *dvbdmxfeed)
 		dvbdmxfeed->pid = pid;
 		ret = dmx_add_feed(dmx, dvbdmxfeed);
 	}
+skip:
 	spin_unlock_irqrestore(&dvb->slock, flags);
 
 	return ret;
@@ -3533,16 +3565,36 @@ int aml_dmx_hw_stop_feed(struct dvb_demux_feed *dvbdmxfeed)
 	struct aml_dmx *dmx = (struct aml_dmx *)dvbdmxfeed->demux;
 	struct aml_dvb *dvb = (struct aml_dvb *)dmx->demux.priv;
 	unsigned long flags;
+	int i, iid = -1;
 
 	spin_lock_irqsave(&dvb->slock, flags);
+
+	for (i = 0; i < CHANNEL_COUNT; i++) {
+		if (dmx->ch_ignore[i].used && (dmx->ch_ignore[i].pid == dvbdmxfeed->pid) &&
+			(dmx->ch_ignore[i].type == dvbdmxfeed->type) && (dmx->ch_ignore[i].pes_type == dvbdmxfeed->pes_type)) {
+				iid = i;
+				dmx->ch_ignore[i].used = 0;
+				dmx->ch_ignore[i].pid = 0;
+				dmx->ch_ignore[i].type = 0;
+				dmx->ch_ignore[i].pes_type = 0;
+				break;
+		}
+	}
+
+	if (iid >= 0) {
+		pr_dbg("%s: %02d. PID[%02d] %d(0x%04X) remove from ignore table channels.\n", __func__, iid, dvbdmxfeed->type, dvbdmxfeed->pid, dvbdmxfeed->pid);
+		goto skip;
+	}
+
 	if (dvbdmxfeed->pid != XPID)
 		dmx_remove_feed(dmx, dvbdmxfeed);
-	
+
 	if (dmx->channel[SYS_CHAN_COUNT].used) {
 		dvbdmxfeed->pid = XPID;
 		dvbdmxfeed->priv = (void *)SYS_CHAN_COUNT; 
 		dmx_remove_feed(dmx, dvbdmxfeed);
 	}
+skip:
 	spin_unlock_irqrestore(&dvb->slock, flags);
 
 	return 0;

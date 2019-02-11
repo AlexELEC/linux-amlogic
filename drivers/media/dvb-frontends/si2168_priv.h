@@ -1,5 +1,5 @@
 /*
- * Silicon Labs Si2146/2147/2148/2157/2158 silicon tuner driver
+ * Silicon Labs Si2168 DVB-T/T2/C demodulator driver
  *
  * Copyright (C) 2014 Antti Palosaari <crope@iki.fi>
  *
@@ -14,34 +14,38 @@
  *    GNU General Public License for more details.
  */
 
-#ifndef SI2157_PRIV_H
-#define SI2157_PRIV_H
+#ifndef SI2168_PRIV_H
+#define SI2168_PRIV_H
 
+#include "si2168.h"
+#include "dvb_frontend.h"
 #include <linux/firmware.h>
-#include "si2157.h"
+#include <linux/i2c-mux.h>
+
+#define SI2168_A20_FIRMWARE "dvb-demod-si2168-a20-01.fw"
+#define SI2168_A30_FIRMWARE "dvb-demod-si2168-a30-01.fw"
+#define SI2168_B40_FIRMWARE "dvb-demod-si2168-b40-01.fw"
+#define SI2168_B40_FIRMWARE_FALLBACK "dvb-demod-si2168-02.fw"
 
 /* state struct */
-struct si2157_dev {
+struct si2168_dev {
+	struct i2c_adapter *adapter;
 	struct mutex i2c_mutex;
-	struct dvb_frontend *fe;
+	struct dvb_frontend fe;
+	fe_delivery_system_t delivery_system;
+	fe_status_t fe_status;
 	bool active;
 	bool fw_loaded;
-	bool inversion;
-	u8 chiptype;
-	u32 if_frequency;
+	u8 ts_mode;
+	bool ts_clock_inv;
 };
 
-#define SI2157_CHIPTYPE_SI2157 0
-#define SI2157_CHIPTYPE_SI2146 1
-
-/* firmware command struct */
-#define SI2157_ARGLEN      30
-struct si2157_cmd {
-	u8 args[SI2157_ARGLEN];
+/* firmare command struct */
+#define SI2168_ARGLEN      30
+struct si2168_cmd {
+	u8 args[SI2168_ARGLEN];
 	unsigned wlen;
 	unsigned rlen;
 };
-
-#define SI2158_A20_FIRMWARE "dvb-tuner-si2158-a20-01.fw"
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Silicon Labs Si2146/2147/2148/2157/2158 silicon tuner driver
+ * Silicon Labs Si2168 DVB-T/T2/C demodulator driver
  *
  * Copyright (C) 2014 Antti Palosaari <crope@iki.fi>
  *
@@ -14,26 +14,34 @@
  *    GNU General Public License for more details.
  */
 
-#ifndef SI2157_H
-#define SI2157_H
+#ifndef SI2168_H
+#define SI2168_H
 
-#include <linux/kconfig.h>
-#include "dvb_frontend.h"
-
+#include <linux/dvb/frontend.h>
 /*
  * I2C address
- * 0x60
+ * 0x64
  */
-struct si2157_config {
+struct si2168_config {
 	/*
 	 * frontend
+	 * returned by driver
 	 */
-	struct dvb_frontend *fe;
+	struct dvb_frontend **fe;
 
 	/*
-	 * Spectral Inversion
+	 * tuner I2C adapter
+	 * returned by driver
 	 */
-	bool inversion;
+	struct i2c_adapter **i2c_adapter;
+
+	/* TS mode */
+#define SI2168_TS_PARALLEL	0x06
+#define SI2168_TS_SERIAL	0x03
+	u8 ts_mode;
+
+	/* TS clock inverted */
+	bool ts_clock_inv;
 };
 
 #endif

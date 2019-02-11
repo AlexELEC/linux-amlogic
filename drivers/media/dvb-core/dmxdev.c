@@ -1108,8 +1108,8 @@ static unsigned int dvb_demux_poll(struct file *file, poll_table *wait)
 	struct dmxdev_filter *dmxdevfilter = file->private_data;
 	unsigned int mask = 0;
 
-	if (!dmxdevfilter)
-		return -EINVAL;
+	if ((!dmxdevfilter) || dmxdevfilter->dev->exit)
+		return POLLERR;
 
 	poll_wait(file, &dmxdevfilter->buffer.queue, wait);
 
@@ -1157,10 +1157,13 @@ static const struct file_operations dvb_demux_fops = {
 	.llseek = default_llseek,
 };
 
-static struct dvb_device dvbdev_demux = {
+static const struct dvb_device dvbdev_demux = {
 	.priv = NULL,
 	.users = 1,
 	.writers = 1,
+#if defined(CONFIG_MEDIA_CONTROLLER_DVB)
+	.name = "dvb-demux",
+#endif
 	.fops = &dvb_demux_fops
 };
 
@@ -1202,6 +1205,9 @@ static unsigned int dvb_dvr_poll(struct file *file, poll_table *wait)
 
 	dprintk("function : %s\n", __func__);
 
+	if (dmxdev->exit)
+		return POLLERR;
+
 	poll_wait(file, &dmxdev->dvr_buffer.queue, wait);
 
 	if ((file->f_flags & O_ACCMODE) == O_RDONLY) {
@@ -1227,10 +1233,13 @@ static const struct file_operations dvb_dvr_fops = {
 	.llseek = default_llseek,
 };
 
-static struct dvb_device dvbdev_dvr = {
+static const struct dvb_device dvbdev_dvr = {
 	.priv = NULL,
 	.readers = 1,
 	.users = 1,
+#if defined(CONFIG_MEDIA_CONTROLLER_DVB)
+	.name = "dvb-dvr",
+#endif
 	.fops = &dvb_dvr_fops
 };
 

@@ -45,6 +45,7 @@ void dvb_ringbuffer_init(struct dvb_ringbuffer *rbuf, void *data, size_t len)
 	rbuf->data=data;
 	rbuf->size=len;
 	rbuf->error=0;
+	rbuf->do_wait=1;
 
 	init_waitqueue_head(&rbuf->queue);
 

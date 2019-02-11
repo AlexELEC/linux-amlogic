@@ -38,6 +38,7 @@ struct dvb_ringbuffer {
 	int               error;
 
 	wait_queue_head_t queue;
+	int               do_wait;
 	spinlock_t        lock;
 };
 

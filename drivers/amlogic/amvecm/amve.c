@@ -4689,7 +4689,8 @@ void vlock_vmode_check(void)
 }
 static void vlock_disable_step1(void)
 {
-	unsigned int m_reg_value, tmp_value;
+	return;
+    unsigned int m_reg_value, tmp_value;
 	unsigned int hiu_reg_addr;
 
 	/* VLOCK_CNTL_EN disable */

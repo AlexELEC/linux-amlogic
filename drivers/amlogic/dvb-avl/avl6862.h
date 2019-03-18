@@ -39,9 +39,11 @@ struct avl6862_config {
 	void		*i2c_adapter;  // i2c adapter
 	u8		demod_address; // demodulator i2c address
 	u8		tuner_address; // tuner i2c address
-	unsigned char 	eDiseqcStatus;
-	int             ts_serial;
+	unsigned char	eDiseqcStatus;
+	int		ts_serial;
 	int		gpio_lock_led;
+
+	int		only_dvb_tc;   // force set avl6762
 };
 
 extern struct dvb_frontend *avl6862_attach(struct avl6862_config *config, struct i2c_adapter *i2c);

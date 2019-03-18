@@ -23,7 +23,7 @@
 static struct mxl608_config mxl608_config = {
 	.xtal_freq_hz = MXL608_XTAL_24MHz,
 	.if_freq_hz = MXL608_IF_5MHz,
-	.agc_type = MXL608_AGC_SELF,
+	.agc_type = MXL608_AGC_EXTERNAL,
 	.i2c_address = 0x60,
 	.xtal_cap = 16,
 	.gain_level = 11,

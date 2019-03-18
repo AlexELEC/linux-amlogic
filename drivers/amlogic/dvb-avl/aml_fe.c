@@ -46,6 +46,7 @@
 #include "rda5815m.h"
 
 #include "tuner_ftm4862.h"
+#include "tuner_mxl608.h"
 
 #include "aml_dvb.h"
 #undef pr_err
@@ -91,7 +92,8 @@ static char *device_name = "avl6862";
 enum {
 	TUNER_BOARD_UNKNOWN,
 	TUNER_BOARD_MEECOOL,
-	TUNER_BOARD_MAGICSEE
+	TUNER_BOARD_MAGICSEE,
+	TUNER_BOARD_M8S_PLUS_DVB_T2,
 };
 
 static struct r848_config r848_config = {
@@ -100,6 +102,25 @@ static struct r848_config r848_config = {
 
 static struct ftm4862_config ftm4862_config = {
 	.reserved = 0,
+};
+
+static struct mxl608_config mxl608x_config = {
+	.xtal_freq_hz = MXL608_XTAL_16MHz,
+	.if_freq_hz = MXL608_IF_5MHz,
+	.agc_type = MXL608_AGC_EXTERNAL,
+	.i2c_address = 0x60,
+	.xtal_cap = 16,
+	.gain_level = 11,
+	.if_out_gain_level = 11,
+	.agc_set_point = 66,
+	.agc_invert_pol = 0,
+	.invert_if = 1,
+	.loop_thru_enable = 0,
+	.clk_out_enable = 1,
+	.clk_out_div = 0,
+	.clk_out_ext = 0,
+	.xtal_sharing_mode = 0,
+	.single_supply_3_3V = 1,
 };
 
 static struct avl6862_config avl6862_config = {
@@ -149,7 +170,7 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 #ifdef CONFIG_OF
 	const char *str;
 #ifdef CONFIG_ARM64
-        struct gpio_desc *desc;
+	struct gpio_desc *desc;
 	int gpio_reset, gpio_power, gpio_antoverload;
 #endif
 #endif
@@ -158,9 +179,11 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 
 #ifdef CONFIG_OF
 	if(!of_property_read_string(pdev->dev.of_node, "dev_name", &str)) {
-		if(strlen(str) > 0 && !strcmp(str, "magicsee"))
-		{
+		if(strlen(str) > 0 && !strcmp(str, "magicsee")) {
 			tun_board = TUNER_BOARD_MAGICSEE;
+			pr_dbg("dev_name=%s\n", str);
+		} else if (strlen(str) > 0 && !strcmp(str, "m8s_plus_dvb_t2")) {
+			tun_board = TUNER_BOARD_M8S_PLUS_DVB_T2;
 			pr_dbg("dev_name=%s\n", str);
 		}
 	}
@@ -201,7 +224,7 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 	if (!PTR_RET(desc)) {
 		avl6862_config.gpio_lock_led = desc_to_gpio(desc);
 		pr_dbg("gpio_lock_led=%d\n", avl6862_config.gpio_lock_led);
-        }*/
+	}*/
 
 	frontend_reset = gpio_reset;
 	frontend_power = gpio_power;
@@ -218,6 +241,11 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 
 	avl6862_gpio();
 	avl6862_Reset();
+
+	if(tun_board == TUNER_BOARD_M8S_PLUS_DVB_T2)
+		avl6862_config.only_dvb_tc = 1;
+	else
+		avl6862_config.only_dvb_tc = 0;
 
 	fe->fe = dvb_attach(avl6862_attach, &avl6862_config, i2c_handle);
 
@@ -277,6 +305,31 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 
 		goto tun_board_end;
 	}
+	else if (tun_board == TUNER_BOARD_M8S_PLUS_DVB_T2)
+	{
+		if (dvb_attach(mxl608x_attach, fe->fe, &mxl608x_config, i2c_handle) == NULL) {
+			dvb_frontend_detach(fe->fe);
+			fe->fe = NULL;
+			pr_err("mxl608x_attach attach failed!!!\n");
+			ret = -ENOMEM;
+			goto err_resource;
+		}
+
+		pr_inf("AVL6762 and MxL608 attached!\n");
+
+		if ((ret=dvb_register_frontend(&advb->dvb_adapter, fe->fe))) {
+			pr_err("Frontend avl6762 registration failed!!!\n");
+			dvb_frontend_detach(fe->fe);
+			ops = &fe->fe->ops;
+			if (ops->release != NULL)
+				ops->release(fe->fe);
+			fe->fe = NULL;
+			ret = -ENOMEM;
+			goto err_resource;
+		}
+
+		goto tun_board_end;
+	}
 	else {
 		pr_err("Tuners not found, frontend avl6862 registration failed!!!\n");
 		dvb_frontend_detach(fe->fe);
@@ -323,8 +376,8 @@ static void avl6862_fe_release(struct aml_dvb *advb, struct aml_fe *fe)
 
 static int avl6862_fe_remove(struct platform_device *pdev)
 {
-        struct aml_fe *drv_data = platform_get_drvdata(pdev);
-        struct aml_dvb *dvb = aml_get_dvb_device();
+	struct aml_fe *drv_data = platform_get_drvdata(pdev);
+	struct aml_dvb *dvb = aml_get_dvb_device();
 
 	platform_set_drvdata(pdev, NULL);
 	avl6862_fe_release(dvb, drv_data);
@@ -346,25 +399,25 @@ static int avl6862_fe_suspend(struct platform_device *pdev, pm_message_t state)
 
 #ifdef CONFIG_OF
 static const struct of_device_id aml_fe_dt_match[]={
-        {
-                .compatible = "amlogic,dvbfe",
-        },
-        {},
+	{
+		.compatible = "amlogic,dvbfe",
+	},
+	{},
 };
 #endif /*CONFIG_OF*/
 
 static struct platform_driver aml_fe_driver = {
-        .probe = avl6862_fe_probe,
-        .remove = avl6862_fe_remove,
-        .resume = avl6862_fe_resume,
-        .suspend = avl6862_fe_suspend,
-        .driver = {
-    	.name = "avl6862",
-        .owner = THIS_MODULE,
+	.probe = avl6862_fe_probe,
+	.remove = avl6862_fe_remove,
+	.resume = avl6862_fe_resume,
+	.suspend = avl6862_fe_suspend,
+	.driver = {
+		.name = "avl6862",
+		.owner = THIS_MODULE,
 #ifdef CONFIG_OF
-        .of_match_table = aml_fe_dt_match,
+		.of_match_table = aml_fe_dt_match,
 #endif
-        }
+	}
 };
 
 #if defined(CONFIG_PROC_FS)

@@ -558,7 +558,7 @@ static void build_ge2d_config(struct config_para_s *cfg,
 				// Single plane
 				canvas_config(index++,
 					cfg->src_planes[0].addr,
-					cfg->src_planes[0].w * src->bpp / 8,
+					cfg->src_planes[0].w * (src->bpp >> 3),
 					cfg->src_planes[0].h,
 					CANVAS_ADDR_NOWRAP,
 					CANVAS_BLKMODE_LINEAR);
@@ -620,7 +620,7 @@ static void build_ge2d_config(struct config_para_s *cfg,
 				// Single plane
 				canvas_config(index++ & 0xff,
 					cfg->dst_planes[0].addr,
-					cfg->dst_planes[0].w * dst->bpp / 8,
+					cfg->dst_planes[0].w * (dst->bpp >> 3),
 					cfg->dst_planes[0].h,
 					CANVAS_ADDR_NOWRAP,
 					CANVAS_BLKMODE_LINEAR);

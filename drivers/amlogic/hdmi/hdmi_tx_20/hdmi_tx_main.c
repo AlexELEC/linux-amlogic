@@ -42,6 +42,7 @@
 /* #include <linux/amlogic/osd/osd_dev.h> */
 #include <linux/amlogic/aml_gpio_consumer.h>
 #include <linux/amlogic/vout/vout_notify.h>
+#include <linux/amlogic/vout/vinfo.h>
 
 #include "hdmi_tx_hdcp.h"
 
@@ -90,9 +91,12 @@ static void hdmitx_set_drm_pkt(struct master_display_info_s *data);
 static void hdmitx_set_vsif_pkt(enum eotf_type type, uint8_t tunnel_mode);
 static int check_fbc_special(unsigned char *edid_dat);
 static int hdcp_tst_sig;
+static DEFINE_MUTEX(vout_mutex);
+
 
 /* add attr for hdmi output colorspace and colordepth */
 static char fmt_attr[16];
+static int force_hdr = 0;
 
 #ifndef CONFIG_AM_TV_OUTPUT
 /* Fake vinfo */
@@ -526,7 +530,7 @@ static int set_disp_mode_auto(void)
 	char* range[] = {"default","limited","full"};
 	char* colour_str[] = {"default", "SMPTE-C", "bt709", "xvYCC601","xvYCC709",
 		"sYCC601","opYCC601","opRGB","bt2020c","bt2020nc","P3 D65","P3 theater"};
-	
+
 	/* vic_ready got from IP */
 	enum hdmi_vic vic_ready = hdev->HWOp.GetState(
 		hdev, STAT_VIDEO_VIC, 0);
@@ -535,8 +539,8 @@ static int set_disp_mode_auto(void)
 
 	/* get current vinfo */
 	info = hdmi_get_current_vinfo();
-	hdmi_print(IMP, VID "auto - get current mode: %s\n",
-		info ? info->name : "null");
+	hdmi_print(IMP, VID "auto - get current mode: %s vmode_e %d\n",
+		info ? info->name : "null", info ? info->mode : 0);
 	if (info == NULL)
 		return -1;
 
@@ -594,9 +598,30 @@ static int set_disp_mode_auto(void)
 				}
 			}
 		}
+		//hdev->HWOp.CntlConfig(hdev, CONF_CLR_AVI_PACKET, 0);
+		//hdev->HWOp.CntlConfig(hdev, CONF_CLR_VSDB_PACKET, 0);
+		//hdev->HWOp.CntlMisc(hdev, MISC_TMDS_PHY_OP, TMDS_PHY_DISABLE);
+		//hdev->HWOp.CntlConfig(hdev, CONF_VIDEO_BLANK_OP, VIDEO_UNBLANK);
 	}
 
 	para = hdmi_get_fmt_name(mode, fmt_attr);
+
+	/* force 4k50/60Hz to 420 unless manually set */
+	if (strstr(fmt_attr,"422") == NULL){
+		switch ((para->vic) & 0xff) {
+			case HDMI_3840x2160p50_16x9:
+			case HDMI_3840x2160p60_16x9:
+			case HDMI_4096x2160p50_256x135:
+			case HDMI_4096x2160p60_256x135:
+			case HDMI_3840x2160p50_64x27:
+			case HDMI_3840x2160p60_64x27:
+				para->cs = COLORSPACE_YUV420;
+				break;
+			default:
+				break;
+		}
+	}
+
 	/* check display caps - warn but don't force - these can only be set by sysfs */
 	if (para->cs == COLORSPACE_YUV422 && !(hdev->RXCap.native_Mode && 0x10))
 		   pr_warn("Colourspace is set to Y422 but display does not support it");
@@ -612,10 +637,7 @@ static int set_disp_mode_auto(void)
 			pr_info("hdmitx: display colourdepth set by attr to %d in cur_param 0x%08x (VIC: %d)\n",hdev->cur_video_param->color_depth * 2,
 					hdev->cur_video_param,  hdev->cur_video_param->VIC);
 		} else {
-			if (stream_cur_cd == COLORDEPTH_24B)
-				hdev->cur_video_param->color_depth = COLORDEPTH_24B;
-			if (stream_cur_cd == COLORDEPTH_30B)
-				hdev->cur_video_param->color_depth = COLORDEPTH_30B;
+			hdev->cur_video_param->color_depth = COLORDEPTH_30B;
 			pr_info("hdmitx: display colourdepth is %d in cur_param 0x%08x (VIC: %d)\n",hdev->cur_video_param->color_depth * 2,
 					hdev->cur_video_param,  hdev->cur_video_param->VIC);
 		}
@@ -631,13 +653,21 @@ static int set_disp_mode_auto(void)
 			if (! dc_support){
 				pr_warn("Bitdepth is set to %d bits but display does not support deep colour",
 						hdev->cur_video_param->color_depth * 2);
-				hdev->cur_video_param->color_depth = COLORDEPTH_24B;
+				/* drop to 8 bit unless forced */
+				if (strstr(fmt_attr,"bit") == NULL)
+					hdev->cur_video_param->color_depth = COLORDEPTH_24B;
 			}
 		}
 	}
-	/* only set full range if forced */
-	if (strstr(fmt_attr,"full") == NULL)
+
+	/* set range using range_control from amcsc */
+	if (strstr(fmt_attr,"full") || get_range_control() & 2){
+               hdev->para->cr = COLORRANGE_FUL;
+	}
+	else {
 		hdev->para->cr = COLORRANGE_LIM;
+
+	}
 
 	/* and recover the original bitstream bitdepth */
 	para->cd = stream_cur_cd;
@@ -675,14 +705,15 @@ static int set_disp_mode_auto(void)
 		memcpy(strstr(fmt_attr,"now"), " ", 3);
 	}
 
-	hdev->cur_VIC = HDMI_Unkown;
-/* if vic is HDMI_Unkown, hdmitx_set_display will disable HDMI */
-	ret = hdmitx_set_display(hdev, vic);
 	hdmi_print(IMP, VID"vinfo: %s %d %d\n", info->name, info->sync_duration_num,
 		info->sync_duration_den);
 	recalc_vinfo_sync_duration(info, hdev->frac_rate_policy);
 	hdmi_print(IMP, VID"vinfo recalc: %s %d %d\n", info->name, info->sync_duration_num,
 		info->sync_duration_den);
+
+	hdev->cur_VIC = HDMI_Unkown;
+/* if vic is HDMI_Unkown, hdmitx_set_display will disable HDMI */
+	ret = hdmitx_set_display(hdev, vic);
 	if (ret >= 0) {
 		hdev->HWOp.Cntl(hdev, HDMITX_AVMUTE_CNTL, AVMUTE_CLEAR);
 		hdev->cur_VIC = vic;
@@ -793,11 +824,48 @@ static ssize_t store_attr(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	memcpy(fmt_attr, buf, sizeof(fmt_attr));
-	if (strstr(fmt_attr,"now"))
-			set_disp_mode_auto();
+	if (strstr(fmt_attr,"now")){
+		struct vinfo_s *info = NULL;
+		info = hdmi_get_current_vinfo();
+		enum vmode_e tmpmode = VMODE_NULL;
+		//set_disp_mode_auto();
+		phy_pll_off();
+		mutex_lock(&vout_mutex);
+		set_current_vmode(tmpmode);
+		vout_notifier_call_chain(VOUT_EVENT_MODE_CHANGE, &tmpmode);
+		tmpmode = info->mode;
+		set_current_vmode(tmpmode);
+		vout_notifier_call_chain(VOUT_EVENT_MODE_CHANGE, &tmpmode);
+		mutex_unlock(&vout_mutex);
+	}
 	return count;
 }
 
+static ssize_t show_force_hdr(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	int pos = 0;
+
+	pos += snprintf(buf+pos, PAGE_SIZE, "%d\n", force_hdr);
+	return pos;
+}
+
+static ssize_t store_force_hdr(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	if (strncmp(buf, "1", 1) == 0)
+		force_hdr = 1;
+	else
+		force_hdr = 0;
+	hdmitx_edid_parse(&hdmitx_device);
+
+	return count;
+}
+
+unsigned int get_force_hdr(void){
+	return force_hdr;
+}
+EXPORT_SYMBOL (get_force_hdr);
 
 /*aud_mode attr*/
 static ssize_t show_aud_mode(struct device *dev,
@@ -2330,6 +2398,8 @@ static DEVICE_ATTR(output_rgb, S_IWUSR | S_IWGRP,
 static DEVICE_ATTR(disp_mode, S_IWUSR | S_IRUGO | S_IWGRP,
 	show_disp_mode, store_disp_mode);
 static DEVICE_ATTR(attr, S_IWUSR | S_IRUGO | S_IWGRP, show_attr, store_attr);
+static DEVICE_ATTR(force_hdr, S_IWUSR | S_IRUGO, show_force_hdr,
+	store_force_hdr);
 static DEVICE_ATTR(aud_mode, S_IWUSR | S_IRUGO, show_aud_mode,
 	store_aud_mode);
 static DEVICE_ATTR(edid, S_IWUSR | S_IRUGO, show_edid, store_edid);
@@ -3176,6 +3246,7 @@ static int amhdmitx_probe(struct platform_device *pdev)
 	hdmitx_device.hdtx_dev = dev;
 	ret = device_create_file(dev, &dev_attr_disp_mode);
 	ret = device_create_file(dev, &dev_attr_attr);
+	ret = device_create_file(dev, &dev_attr_force_hdr);
 	ret = device_create_file(dev, &dev_attr_aud_mode);
 	ret = device_create_file(dev, &dev_attr_edid);
 	ret = device_create_file(dev, &dev_attr_rawedid);
@@ -3367,6 +3438,7 @@ static int amhdmitx_remove(struct platform_device *pdev)
 	/* Remove the cdev */
 	device_remove_file(dev, &dev_attr_disp_mode);
 	device_remove_file(dev, &dev_attr_attr);
+	device_remove_file(dev, &dev_attr_force_hdr);
 	device_remove_file(dev, &dev_attr_aud_mode);
 	device_remove_file(dev, &dev_attr_edid);
 	device_remove_file(dev, &dev_attr_rawedid);

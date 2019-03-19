@@ -43,6 +43,7 @@
 #include <linux/dma-mapping.h>
 #include <meson_ion.h>
 /* Amlogic Headers */
+#include <linux/amlogic/cpu_version.h>
 #include <linux/amlogic/vout/vout_notify.h>
 #include <linux/amlogic/instaboot/instaboot.h>
 #include <sw_sync.h>
@@ -908,7 +909,10 @@ static int osd_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 			break;
 		}
 	case FBIO_WAITFORVSYNC:
-		osd_wait_vsync_event();
+		if (get_cpu_type() == MESON_CPU_MAJOR_ID_GXM)
+			osd_wait_vsync_hw();
+		else
+			osd_wait_vsync_event();
 		ret = copy_to_user(argp, &ret, sizeof(u32));
 		break;
 	default:
@@ -2425,13 +2429,15 @@ static int osd_probe(struct platform_device *pdev)
 
 	/* get meson-fb resource from dt */
 	prop = of_get_property(pdev->dev.of_node, "scale_mode", NULL);
-	if (prop)
+	if (prop) {
 		prop_idx = of_read_ulong(prop, 1);
-	osd_set_free_scale_mode_hw(DEV_OSD0, prop_idx);
+		osd_set_free_scale_mode_hw(DEV_OSD0, prop_idx);
+	}
 	prop = of_get_property(pdev->dev.of_node, "4k2k_fb", NULL);
-	if (prop)
+	if (prop) {
 		prop_idx = of_read_ulong(prop, 1);
-	osd_set_4k2k_fb_mode_hw(prop_idx);
+		osd_set_4k2k_fb_mode_hw(prop_idx);
+	}
 	/* get default display mode from dt */
 	ret = of_property_read_string(pdev->dev.of_node,
 		"display_mode_default", &str);
@@ -2440,9 +2446,10 @@ static int osd_probe(struct platform_device *pdev)
 	else
 		current_mode = vmode_name_to_mode(str);
 	prop = of_get_property(pdev->dev.of_node, "pxp_mode", NULL);
-	if (prop)
+	if (prop) {
 		prop_idx = of_read_ulong(prop, 1);
-	osd_set_pxp_mode(prop_idx);
+		osd_set_pxp_mode(prop_idx);
+	}
 
 	prop = of_get_property(pdev->dev.of_node, "ddr_urgent", NULL);
 	if (prop) {

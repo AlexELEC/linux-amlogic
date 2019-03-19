@@ -502,7 +502,7 @@ static void hdmi_hwi_init(struct hdmitx_dev *hdev)
 
 	hdmitx_set_reg_bits(HDMITX_DWC_FC_INVIDCONF, 1, 7, 1);
 	hdmitx_wr_reg(HDMITX_DWC_A_HDCPCFG1, 0x7);
-	hdmitx_wr_reg(HDMITX_DWC_A_HDCPCFG0, 0x53);
+	hdmitx_wr_reg(HDMITX_DWC_A_HDCPCFG0, 0x13);
 	/* Enable skpclk to HDCP2.2 IP */
 	hdmitx_set_reg_bits(HDMITX_TOP_CLK_CNTL, 1, 7, 1);
 	/* Enable esmclk to HDCP2.2 IP */
@@ -533,9 +533,9 @@ static void hdmi_hwi_init(struct hdmitx_dev *hdev)
 	hdmitx_wr_reg(HDMITX_DWC_I2CM_DIV, data32);
 
 	hdmitx_wr_reg(HDMITX_DWC_I2CM_SS_SCL_HCNT_1, 0);
-	hdmitx_wr_reg(HDMITX_DWC_I2CM_SS_SCL_HCNT_0, 0x67);
+	hdmitx_wr_reg(HDMITX_DWC_I2CM_SS_SCL_HCNT_0, 0xcf);
 	hdmitx_wr_reg(HDMITX_DWC_I2CM_SS_SCL_LCNT_1, 0);
-	hdmitx_wr_reg(HDMITX_DWC_I2CM_SS_SCL_LCNT_0, 0x78);
+	hdmitx_wr_reg(HDMITX_DWC_I2CM_SS_SCL_LCNT_0, 0xff);
 	hdmitx_wr_reg(HDMITX_DWC_I2CM_FS_SCL_HCNT_1, 0);
 	hdmitx_wr_reg(HDMITX_DWC_I2CM_FS_SCL_HCNT_0, 0x0f);
 	hdmitx_wr_reg(HDMITX_DWC_I2CM_FS_SCL_LCNT_1, 0);
@@ -1781,7 +1781,7 @@ do { \
 	case HDMI_4096x2160p25_256x135:
 	case HDMI_4096x2160p30_256x135:
 		if ((hdev->para->cs == COLORSPACE_YUV422)
-			|| (hdev->para->cd == COLORDEPTH_24B))
+			|| (hdev->cur_video_param->color_depth == COLORDEPTH_24B))
 			set_phy_by_mode(2);
 		else
 			set_phy_by_mode(1);
@@ -1799,7 +1799,7 @@ do { \
 	case HDMI_3840x2160p60_16x9_Y420:
 	case HDMI_4096x2160p50_256x135_Y420:
 	case HDMI_4096x2160p60_256x135_Y420:
-		if (hdev->para->cd == COLORDEPTH_24B)
+		if (hdev->cur_video_param->color_depth == COLORDEPTH_24B)
 			set_phy_by_mode(2);
 		else
 			set_phy_by_mode(1);
@@ -4810,6 +4810,9 @@ static void config_hdmi20_tx(enum hdmi_vic vic,
 
 	/* Reset pulse */
 	hdmitx_rd_check_reg(HDMITX_DWC_MC_LOCKONCLOCK, 0xff, 0x9f);
+
+	hd_write_reg(P_ENCP_VIDEO_EN, 0);
+	hdmitx_wr_reg(HDMITX_DWC_MC_CLKDIS, 0xdf);
 	hdmitx_wr_reg(HDMITX_DWC_MC_SWRSTZREQ, 0);
 	mdelay(10);
 
@@ -4823,7 +4826,14 @@ static void config_hdmi20_tx(enum hdmi_vic vic,
 	data32 |= (1 << 0);
 	hdmitx_wr_reg(HDMITX_DWC_MC_SWRSTZREQ, data32);
 	hdmitx_wr_reg(HDMITX_DWC_FC_VSYNCINWIDTH,
-		hdmitx_rd_reg(HDMITX_DWC_FC_VSYNCINWIDTH));
+			hdmitx_rd_reg(HDMITX_DWC_FC_VSYNCINWIDTH));
+
+	hdmitx_wr_reg(HDMITX_DWC_MC_CLKDIS, 0);
+	hd_write_reg(P_ENCP_VIDEO_EN, 0xff);
+
+	hdmitx_set_reg_bits(HDMITX_DWC_FC_INVIDCONF, 0, 3, 1);
+	mdelay(1);
+	hdmitx_set_reg_bits(HDMITX_DWC_FC_INVIDCONF, 1, 3, 1);
 } /* config_hdmi20_tx */
 
 /* TODO */

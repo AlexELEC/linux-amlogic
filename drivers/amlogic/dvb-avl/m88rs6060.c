@@ -768,9 +768,9 @@ EXPORT_SYMBOL(m88rs6060_attach);
 
 static int m88rs6060_tuner_set_pll_freq(struct m88rs6060_state *state, u32 tuner_freq_MHz)
 {
-	u32 fcry_KHz, ulNDiv1, ulNDiv2, ulNDiv;
-	u8  refDiv, ucLoDiv1, ucLomod1, ucLoDiv2, ucLomod2, ucLoDiv, ucLomod;
-	u8 reg27, reg29, reg2d, reg2e, reg36, reg3d;
+	u32 fcry_KHz, ulNDiv1, ulNDiv2;
+	u8  refDiv, ucLoDiv1, ucLomod1, ucLoDiv2, ucLomod2;
+	u8 reg27, reg29, reg36, reg3d;
 
 	fcry_KHz = MT_FE_CRYSTAL_KHZ;
 	refDiv = 27;

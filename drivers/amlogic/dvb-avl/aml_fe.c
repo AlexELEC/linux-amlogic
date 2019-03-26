@@ -41,6 +41,7 @@
 #include "aml_fe.h"
 
 #include "avl6862.h"
+#include "m88rs6060.h"
 #include "r848a.h"
 #include "mxl608.h"
 #include "rda5815m.h"
@@ -75,6 +76,10 @@ MODULE_PARM_DESC(frontend_antoverload, "\n\t\t Antoverload GPIO of frontend");
 static int frontend_antoverload = -1;
 module_param(frontend_antoverload, int, 0644);
 
+MODULE_PARM_DESC(frontend_userdef, "\n\t\t User defined GPIO of frontend");
+static int frontend_userdef = -1;
+module_param(frontend_userdef, int, 0644);
+
 #if defined(CONFIG_PROC_FS)
 static DEFINE_SPINLOCK(aml_fe_lock);
 static struct proc_dir_entry *proc_aml_fe;
@@ -94,6 +99,7 @@ enum {
 	TUNER_BOARD_MEECOOL,
 	TUNER_BOARD_MAGICSEE,
 	TUNER_BOARD_M8S_PLUS_DVB_T2,
+	TUNER_BOARD_M8S_PLUS_DVB_S2,
 };
 
 static struct r848_config r848_config = {
@@ -129,6 +135,13 @@ static struct avl6862_config avl6862_config = {
 	.ts_serial = 0,
 };
 
+static struct m88rs6060_config m88rs6060_config = {
+	.demod_address = 0x69,
+	.pin_ctrl = 0x82,
+	.ci_mode = 0,
+	.ts_mode = 0,
+};
+
 int avl6862_Reset(void)
 {
 	pr_dbg("avl6862_Reset!\n");
@@ -159,6 +172,11 @@ int avl6862_gpio(void)
 		gpio_direction_output(frontend_antoverload, 0);
 	}
 
+	if(frontend_userdef >= 0) {
+		gpio_request(frontend_userdef,device_name);
+		gpio_direction_output(frontend_userdef, 0);
+	}
+
 	return 0;
 }
 
@@ -171,11 +189,11 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 	const char *str;
 #ifdef CONFIG_ARM64
 	struct gpio_desc *desc;
-	int gpio_reset, gpio_power, gpio_antoverload;
+	int gpio_reset, gpio_power, gpio_antoverload, gpio_userdef;
 #endif
 #endif
 
-	pr_inf("Init AVL6862 frontend %d\n", id);
+	pr_inf("Init AVL6862/M88RS6060 frontend %d\n", id);
 
 #ifdef CONFIG_OF
 	if(!of_property_read_string(pdev->dev.of_node, "dev_name", &str)) {
@@ -184,6 +202,9 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 			pr_dbg("dev_name=%s\n", str);
 		} else if (strlen(str) > 0 && !strcmp(str, "m8s_plus_dvb_t2")) {
 			tun_board = TUNER_BOARD_M8S_PLUS_DVB_T2;
+			pr_dbg("dev_name=%s\n", str);
+		} else if (strlen(str) > 0 && !strcmp(str, "m8s_plus_dvb_s2")) {
+			tun_board = TUNER_BOARD_M8S_PLUS_DVB_S2;
 			pr_dbg("dev_name=%s\n", str);
 		}
 	}
@@ -197,6 +218,8 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 		ret = -ENOMEM;
 		goto err_resource;
 	}
+	if(tun_board == TUNER_BOARD_M8S_PLUS_DVB_S2)
+		m88rs6060_config.ts_mode = avl6862_config.ts_serial;
 	pr_dbg("i2c_adap_id=%d\n", i2c_adap_id);
 	desc = of_get_named_gpiod_flags(pdev->dev.of_node, "dtv_demod0_reset_gpio-gpios", 0, NULL);
 	if (!PTR_RET(desc)) {
@@ -219,6 +242,13 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 	} else
 		gpio_antoverload = -1;
 
+	desc = of_get_named_gpiod_flags(pdev->dev.of_node, "dtv_demod0_userdef_gpio-gpios", 0, NULL);
+	if (!PTR_RET(desc)) {
+		gpio_userdef = desc_to_gpio(desc);
+		pr_dbg("gpio_userdef=%d\n", gpio_userdef);
+	} else
+		gpio_userdef = -1;
+
 	avl6862_config.gpio_lock_led = 0;
 	/*desc = of_get_named_gpiod_flags(pdev->dev.of_node, "dtv_demod0_lock_gpio-gpios", 0, NULL);
 	if (!PTR_RET(desc)) {
@@ -229,6 +259,7 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 	frontend_reset = gpio_reset;
 	frontend_power = gpio_power;
 	frontend_antoverload = gpio_antoverload;
+	frontend_userdef = gpio_userdef;
 #endif /*CONFIG_OF*/
 
 	i2c_handle = i2c_get_adapter(i2c_adap_id);
@@ -247,10 +278,13 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 	else
 		avl6862_config.only_dvb_tc = 0;
 
-	fe->fe = dvb_attach(avl6862_attach, &avl6862_config, i2c_handle);
+	if(tun_board == TUNER_BOARD_M8S_PLUS_DVB_S2)
+		fe->fe = dvb_attach(m88rs6060_attach, &m88rs6060_config, i2c_handle);
+	else
+		fe->fe = dvb_attach(avl6862_attach, &avl6862_config, i2c_handle);
 
 	if (!fe->fe) {
-		pr_err("avl6862_attach attach failed!!!\n");
+		pr_err("avl6862_attach/m88rs6060_attach attach failed!!!\n");
 		ret = -ENOMEM;
 		goto err_resource;
 	}
@@ -330,6 +364,23 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 
 		goto tun_board_end;
 	}
+	else if (tun_board == TUNER_BOARD_M8S_PLUS_DVB_S2)
+	{
+		pr_inf("M88RS6060 attached!\n");
+
+		if ((ret=dvb_register_frontend(&advb->dvb_adapter, fe->fe))) {
+			pr_err("Frontend m88rs6060 registration failed!!!\n");
+			dvb_frontend_detach(fe->fe);
+			ops = &fe->fe->ops;
+			if (ops->release != NULL)
+				ops->release(fe->fe);
+			fe->fe = NULL;
+			ret = -ENOMEM;
+			goto err_resource;
+		}
+
+		goto tun_board_end;
+	}
 	else {
 		pr_err("Tuners not found, frontend avl6862 registration failed!!!\n");
 		dvb_frontend_detach(fe->fe);
@@ -342,7 +393,7 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 	}
 
 tun_board_end:
-	pr_inf("Frontend AVL6862 registred!\n");
+	pr_inf("Frontend AVL6862/M88RS6060 registred!\n");
 	dmx_reset_dmx_sw(-1);
 
 	return 0;
@@ -507,5 +558,5 @@ static void __exit avlfrontend_exit(void) {
 module_init(avlfrontend_init);
 module_exit(avlfrontend_exit);
 MODULE_AUTHOR("afl1");
-MODULE_DESCRIPTION("AVL6862 DVB-Sx/Tx/C frontend driver");
+MODULE_DESCRIPTION("AVL6862/M88RS6060 DVB-Sx/Tx/C frontend driver");
 MODULE_LICENSE("GPL");

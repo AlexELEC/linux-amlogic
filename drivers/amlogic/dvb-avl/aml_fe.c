@@ -187,6 +187,7 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 	struct i2c_adapter *i2c_handle;
 #ifdef CONFIG_OF
 	const char *str;
+	u8 demod_fw_name[64];
 #ifdef CONFIG_ARM64
 	struct gpio_desc *desc;
 	int gpio_reset, gpio_power, gpio_antoverload, gpio_userdef;
@@ -196,6 +197,7 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 	pr_inf("Init AVL6862/M88RS6060 frontend %d\n", id);
 
 #ifdef CONFIG_OF
+	memset(demod_fw_name, 0, sizeof(demod_fw_name));
 	if(!of_property_read_string(pdev->dev.of_node, "dev_name", &str)) {
 		if(strlen(str) > 0 && !strcmp(str, "magicsee")) {
 			tun_board = TUNER_BOARD_MAGICSEE;
@@ -208,6 +210,10 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 			pr_dbg("dev_name=%s\n", str);
 		}
 	}
+	if(!of_property_read_string(pdev->dev.of_node, "dtv_demod0_fw_name", &str)) {
+		if(strlen(str) > 0)
+			strncpy(demod_fw_name, str, sizeof(demod_fw_name));
+	}
 	//if(!of_property_read_u32(pdev->dev.of_node, "dtv_demod0_i2c_addr", &i2c_addr)) {
 	//	avl6862_config.demod_address = i2c_addr;
 	//	pr_dbg("i2c_addr=0x%02x\n", avl6862_config.demod_address);
@@ -218,8 +224,10 @@ static int avl6862_fe_init(struct aml_dvb *advb, struct platform_device *pdev, s
 		ret = -ENOMEM;
 		goto err_resource;
 	}
-	if(tun_board == TUNER_BOARD_M8S_PLUS_DVB_S2)
+	if(tun_board == TUNER_BOARD_M8S_PLUS_DVB_S2) {
 		m88rs6060_config.ts_mode = avl6862_config.ts_serial;
+		memcpy(m88rs6060_config.name_ext_fw, demod_fw_name, sizeof(demod_fw_name));
+	}
 	pr_dbg("i2c_adap_id=%d\n", i2c_adap_id);
 	desc = of_get_named_gpiod_flags(pdev->dev.of_node, "dtv_demod0_reset_gpio-gpios", 0, NULL);
 	if (!PTR_RET(desc)) {

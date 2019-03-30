@@ -41,6 +41,8 @@ MODULE_PARM_DESC(debug, "Activates frontend debugging (default:0)");
 			printk(KERN_INFO "m88rs6060: " args); \
 	} while (0)
 
+#define M88RS6060_SNR_ITERATIONS	10
+
 /* demod register operations. */
 static int m88rs6060_writereg(struct m88rs6060_state *state, int reg, int data)
 {
@@ -76,7 +78,7 @@ static int m88rs6060_readreg(struct m88rs6060_state *state, u8 reg)
 	ret = i2c_transfer(state->i2c, msg, 2);
 
 	if (ret != 2) {
-		printk(KERN_ERR "%s: reg=0x%x (error=%d)\n",
+		printk(KERN_ERR "%s: reg = 0x%x (error = %d)\n",
 			__func__, reg, ret);
 		return ret;
 	}
@@ -124,7 +126,7 @@ static int m88rs6060_tuner_readreg(struct m88rs6060_state *state, u8 reg)
 	ret = i2c_transfer(state->i2c, msg, 2);
 
 	if (ret != 2) {
-		printk(KERN_ERR "%s: reg=0x%x(error=%d)\n", __func__, reg, ret);
+		printk(KERN_ERR "%s: reg = 0x%x(error = %d)\n", __func__, reg, ret);
 		return ret;
 	}
 
@@ -175,30 +177,43 @@ static int m88rs6060_load_firmware(struct dvb_frontend *fe)
 {
 	struct m88rs6060_state *state = fe->demodulator_priv;
 	const struct firmware *fw;
-	int i, ret = 0;
+	u8 *pfw;
+	int i, load_fw = 0, ret = 0;
 
 	dprintk("%s()\n", __func__);
 
 	if (state->skip_fw_load)
 		return 0;
-	/* Load firmware */
-	/* request the firmware, this will block until someone uploads it */
-	printk(KERN_INFO "%s: Waiting for firmware upload (%s)...\n", __func__,
-				RS6060_DEFAULT_FIRMWARE);
-	ret = request_firmware(&fw, RS6060_DEFAULT_FIRMWARE,
+
+	if (strlen(state->config->name_ext_fw) > 1) {
+		/* Load firmware */
+		/* request the firmware, this will block until someone uploads it */
+		printk(KERN_INFO "%s: Waiting for firmware upload (%s)...\n", __func__,
+				state->config->name_ext_fw);
+		ret = request_firmware(&fw, state->config->name_ext_fw,
 				state->i2c->dev.parent);
 
-	printk(KERN_INFO "%s: Waiting for firmware upload(2)...\n", __func__);
-	if (ret) {
-		printk(KERN_ERR "%s: No firmware uploaded (timeout or file not "
+		printk(KERN_INFO "%s: Waiting for firmware upload(2)...\n", __func__);
+		if (ret) {
+			printk(KERN_INFO "%s: No firmware uploaded (timeout or file not "
 				"found?)\n", __func__);
-		return ret;
+			goto fw_int;
+		}
+		pfw = fw->data;
+		load_fw = 1;
+	}
+
+fw_int:
+	if (!load_fw) {
+		printk(KERN_INFO "%s: Load built in firmware...\n", __func__);
+		pfw = rs6060_builtin_fw;
 	}
 
 	/* Make sure we don't recurse back through here during loading */
 	state->skip_fw_load = 1;
 
-	dprintk("Firmware is %zu bytes (%02x %02x .. %02x %02x)\n",
+	if (load_fw)
+		dprintk("Firmware is %zu bytes (%02x %02x .. %02x %02x)\n",
 			fw->size,
 			fw->data[0],
 			fw->data[1],
@@ -208,20 +223,21 @@ static int m88rs6060_load_firmware(struct dvb_frontend *fe)
 	/* stop internal mcu */
 	m88rs6060_writereg(state, 0xb2, 0x01);
 	/* split firmware to download */
-	for(i = 0; i < FW_DOWN_LOOP; i++){
-		ret = m88rs6060_writeregN(state, 0xb0, &(fw->data[FW_DOWN_SIZE*i]), FW_DOWN_SIZE);
+	for (i = 0; i < FW_DOWN_LOOP; i++) {
+		ret = m88rs6060_writeregN(state, 0xb0, &(pfw[FW_DOWN_SIZE * i]), FW_DOWN_SIZE);
 		if(ret != 1) break;
 	}
 	/* start internal mcu */
-	if(ret == 1)
+	if (ret == 1)
 		m88rs6060_writereg(state, 0xb2, 0x00);
 
-	release_firmware(fw);
+	if (load_fw)
+		release_firmware(fw);
 
 	dprintk("%s: Firmware upload %s\n", __func__,
 			ret == 1 ? "complete" : "failed");
 
-	if(ret == 1) ret = 0;
+	if (ret == 1) ret = 0;
 
 	/* Ensure firmware is always loaded if required */
 	state->skip_fw_load = 0;
@@ -238,27 +254,27 @@ static int m88rs6060_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t volta
 
 	dprintk("m88rs6060:pin_ctrl = (%02x)\n", state->config->pin_ctrl);
 
-	if(state->config->set_voltage)
+	if (state->config->set_voltage)
 		state->config->set_voltage(fe, voltage);
 
 	data = m88rs6060_readreg(state, 0xa2);
 
-	if(state->config->pin_ctrl & 0x80) { /* If control pin is assigned */
+	if (state->config->pin_ctrl & 0x80) { /* If control pin is assigned */
 		data &= ~0x03; /* bit0 V/H, bit1 off/on */
-		if(state->config->pin_ctrl & 0x02)
+		if (state->config->pin_ctrl & 0x02)
 			data |= 0x02;
 
 		switch (voltage) {
 		case SEC_VOLTAGE_18:
-			if((state->config->pin_ctrl & 0x01) == 0)
+			if ((state->config->pin_ctrl & 0x01) == 0)
 				data |= 0x01;
 			break;
 		case SEC_VOLTAGE_13:
-			if(state->config->pin_ctrl & 0x01)
+			if (state->config->pin_ctrl & 0x01)
 				data |= 0x01;
 			break;
 		case SEC_VOLTAGE_OFF:
-			if(state->config->pin_ctrl & 0x02)
+			if (state->config->pin_ctrl & 0x02)
 				data &= ~0x02;
 			else
 				data |= 0x02;
@@ -281,7 +297,7 @@ static int m88rs6060_read_status(struct dvb_frontend *fe, fe_status_t* status)
 	switch (state->delivery_system) {
 	case SYS_DVBS:
 		lock = m88rs6060_readreg(state, 0xd1);
-		dprintk("%s: SYS_DVBS status=%x.\n", __func__, lock);
+		dprintk("%s: SYS_DVBS status = %x.\n", __func__, lock);
 
 		if ((lock & 0x07) == 0x07) {
 				*status = FE_HAS_SIGNAL | FE_HAS_CARRIER 
@@ -290,7 +306,7 @@ static int m88rs6060_read_status(struct dvb_frontend *fe, fe_status_t* status)
 		break;
 	case SYS_DVBS2:
 		lock = m88rs6060_readreg(state, 0x0d);
-		dprintk("%s: SYS_DVBS2 status=%x.\n", __func__, lock);
+		dprintk("%s: SYS_DVBS2 status = %x.\n", __func__, lock);
 
 		if ((lock & 0x8f) == 0x8f)
 			*status = FE_HAS_SIGNAL | FE_HAS_CARRIER 
@@ -300,7 +316,7 @@ static int m88rs6060_read_status(struct dvb_frontend *fe, fe_status_t* status)
 	default:
 		break;
 	}
-	msleep(10);
+	msleep(20);
 
 	return 0;
 }
@@ -309,7 +325,7 @@ static int m88rs6060_read_ber(struct dvb_frontend *fe, u32* ber)
 {
 	struct m88rs6060_state *state = fe->demodulator_priv;
 	u8 tmp1, tmp2, tmp3;
-	u32 ldpc_frame_cnt, pre_err_packags, code_rate_fac = 0;
+	u32 ldpc_frame_cnt, pre_err_packags;
 
 	dprintk("%s()\n", __func__);
 
@@ -326,21 +342,6 @@ static int m88rs6060_read_ber(struct dvb_frontend *fe, u32* ber)
 		}
 		break;
 	case SYS_DVBS2:
-		tmp1 = m88rs6060_readreg(state, 0x7e) & 0x0f;
-		switch(tmp1){
-		case 0:	code_rate_fac = 16008 - 80; break;
-		case 1:	code_rate_fac = 21408 - 80; break;
-		case 2:	code_rate_fac = 25728 - 80; break;
-		case 3:	code_rate_fac = 32208 - 80; break;
-		case 4:	code_rate_fac = 38688 - 80; break;
-		case 5:	code_rate_fac = 43040 - 80; break;
-		case 6:	code_rate_fac = 48408 - 80; break;
-		case 7:	code_rate_fac = 51648 - 80; break;
-		case 8:	code_rate_fac = 53840 - 80; break;
-		case 9:	code_rate_fac = 57472 - 80; break;
-		case 10: code_rate_fac = 58192 - 80; break;
-		}
-
 		tmp1 = m88rs6060_readreg(state, 0xd7) & 0xff;
 		tmp2 = m88rs6060_readreg(state, 0xd6) & 0xff;
 		tmp3 = m88rs6060_readreg(state, 0xd5) & 0xff;
@@ -362,7 +363,7 @@ static int m88rs6060_read_ber(struct dvb_frontend *fe, u32* ber)
 		break;
 	}
 	*ber = state->preBer;
-	msleep(10);
+	msleep(20);
 
 	return 0;
 }
@@ -371,43 +372,39 @@ static int m88rs6060_read_signal_strength(struct dvb_frontend *fe,
 						u16 *signal_strength)
 {
 	struct m88rs6060_state *state = fe->demodulator_priv;
-
-	int val;
-
-	u32  PGA2_cri_GS = 46, PGA2_crf_GS = 290, TIA_GS = 290;
-	u32  RF_GC = 1200, IF_GC = 1100, BB_GC = 300, PGA2_GC = 300, TIA_GC = 300;
-	u32  PGA2_cri = 0, PGA2_crf = 0;
-	u32  RFG = 0, IFG = 0, BBG = 0, PGA2G = 0, TIAG = 0;
-
+	u32 PGA2_cri_GS = 46, PGA2_crf_GS = 290, TIA_GS = 290;
+	u32 RF_GC = 1200, IF_GC = 1100, BB_GC = 300, PGA2_GC = 300, TIA_GC = 300;
+	u32 PGA2_cri = 0, PGA2_crf = 0;
+	u32 RFG = 0, IFG = 0, BBG = 0, PGA2G = 0, TIAG = 0;
+	u32 RFGS[13] = { 0, 245, 266, 268, 270, 285, 298, 295, 283, 285, 285, 300, 300 };
+	u32 IFGS[12] = { 0, 300, 230, 270, 270, 285, 295, 285, 290, 295, 295, 310 };
+	u32 BBGS[14] = { 0, 286, 275, 290, 294, 300, 290, 290, 285, 283, 260, 295, 290, 260 };
 	u32 i = 0;
-
-	u32 RFGS[13] = {0, 245, 266, 268, 270, 285, 298, 295, 283, 285, 285, 300, 300};
-	u32 IFGS[12] = {0, 300, 230, 270, 270, 285, 295, 285, 290, 295, 295, 310};
-	u32 BBGS[14] = {0, 286, 275, 290, 294, 300, 290, 290, 285, 283, 260, 295, 290, 260};
+	int val;
 
 	dprintk("%s()\n", __func__);
 
-	val = m88rs6060_tuner_readreg(state, 0x5A);
+	val = m88rs6060_tuner_readreg(state, 0x5a);
 	RF_GC = val & 0x0f;
-	if(RF_GC >= ARRAY_SIZE(RFGS)) {
-		printk(KERN_ERR "%s: Invalid, RFGC=%d\n", __func__, RF_GC);
+	if (RF_GC >= ARRAY_SIZE(RFGS)) {
+		printk(KERN_ERR "%s: Invalid, RFGC = %d\n", __func__, RF_GC);
 		return -EINVAL;
 	}
 
-	val = m88rs6060_tuner_readreg(state, 0x5F);
+	val = m88rs6060_tuner_readreg(state, 0x5f);
 	IF_GC = val & 0x0f;
-	if(IF_GC >= ARRAY_SIZE(IFGS)) {
-		printk(KERN_ERR "%s: Invalid, IFGC=%d\n", __func__, IF_GC);
+	if (IF_GC >= ARRAY_SIZE(IFGS)) {
+		printk(KERN_ERR "%s: Invalid, IFGC = %d\n", __func__, IF_GC);
 		return -EINVAL;
 	}
 
-	val = m88rs6060_tuner_readreg(state, 0x3F);
+	val = m88rs6060_tuner_readreg(state, 0x3f);
 	TIA_GC = (val >> 4) & 0x07;
 
 	val = m88rs6060_tuner_readreg(state, 0x77);
 	BB_GC = (val >> 4) & 0x0f;
-	if(BB_GC >= ARRAY_SIZE(BBGS)) {
-		printk(KERN_ERR "%s: Invalid, BBGC=%d\n", __func__, BB_GC);
+	if (BB_GC >= ARRAY_SIZE(BBGS)) {
+		printk(KERN_ERR "%s: Invalid, BBGC = %d\n", __func__, BB_GC);
 		return -EINVAL;
 	}
 
@@ -416,7 +413,7 @@ static int m88rs6060_read_signal_strength(struct dvb_frontend *fe,
 	PGA2_cri = PGA2_GC >> 2;
 	PGA2_crf = PGA2_GC & 0x03;
 
-	for(i = 0; i <= RF_GC; i++) {
+	for (i = 0; i <= RF_GC; i++) {
 		RFG += RFGS[i];
 	}
 
@@ -425,13 +422,13 @@ static int m88rs6060_read_signal_strength(struct dvb_frontend *fe,
 	if(RF_GC == 2)	RFG += 200;
 	if(RF_GC == 3)	RFG += 100;
 
-	for(i = 0; i <= IF_GC; i++) {
+	for (i = 0; i <= IF_GC; i++) {
 		IFG += IFGS[i];
 	}
 
 	TIAG = TIA_GC * TIA_GS;
 
-	for(i = 0; i <= BB_GC; i++) {
+	for (i = 0; i <= BB_GC; i++) {
 		BBG += BBGS[i];
 	}
 
@@ -440,7 +437,7 @@ static int m88rs6060_read_signal_strength(struct dvb_frontend *fe,
 	val = m88rs6060_tuner_readreg(state, 0x96);
 
 	*signal_strength = (RFG + IFG - TIAG + BBG + PGA2G + val) * 9;
-	msleep(10);
+	msleep(20);
 
 	return 0;
 }
@@ -449,49 +446,29 @@ static int m88rs6060_read_snr(struct dvb_frontend *fe, u16 *p_snr)
 {
 	struct m88rs6060_state *state = fe->demodulator_priv;
 	u8 val, npow1, npow2, spow1, cnt;
-	u16 tmp, snr;
 	u32 npow, spow, snr_total;
-	static const u16 mes_log10[] ={
-		0,	3010,	4771,	6021, 	6990,	7781,	8451,	9031,	9542,	10000,
-		10414,	10792,	11139,	11461,	11761,	12041,	12304,	12553,	12788,	13010,
-		13222,	13424,	13617,	13802,	13979,	14150,	14314,	14472,	14624,	14771,
-		14914,	15052,	15185,	15315,	15441,	15563,	15682,	15798,	15911,	16021,
-		16128,	16232,	16335,	16435,	16532,	16628,	16721,	16812,	16902,	16990,
-		17076,	17160,	17243,	17324,	17404,	17482,	17559,	17634,	17709,	17782,
-		17853,	17924,	17993,	18062,	18129,	18195,	18261,	18325,	18388,	18451,
-		18513,	18573,	18633,	18692,	18751,	18808,	18865,	18921,	18976,	19031
-	};
-	static const u16 mes_loge[] ={
-		0,	6931,	10986,	13863, 	16094,	17918,	19459,	20794,	21972,	23026,
-		23979,	24849,	25649,	26391,	27081,	27726,	28332,	28904,	29444,	29957,
-		30445,	30910,	31355,	31781,	32189,	32581,	32958,	33322,	33673,	34012,
-		34340,	34657,
-	};
+	u16 snr = 0;
 
 	dprintk("%s()\n", __func__);
 
-	snr = 0;
-
 	switch (state->delivery_system) {
 	case SYS_DVBS:
-		cnt = 10; snr_total = 0;
-		while(cnt > 0){
+		cnt = M88RS6060_SNR_ITERATIONS; snr_total = 0;
+		while (cnt > 0) {
 			val = m88rs6060_readreg(state, 0xff);
 			msleep(10);
 			snr_total += val;
 			cnt--;
 		}
-		tmp = (u16)(snr_total / 80);
-		if(tmp > 0){
-			if (tmp > 32) tmp = 32;
-			snr = (mes_loge[tmp - 1] * 100);
-		}else{
-			snr = 0;
+		snr_total = DIV_ROUND_CLOSEST(snr_total, 8 * M88RS6060_SNR_ITERATIONS);
+		if (snr_total) {
+			/* SNR <= 65535 */
+			snr = (u16)(div_u64((u64) 10000 * intlog2(snr_total), intlog2(10))) * (4 + state->kratio);
 		}
 		break;
 	case SYS_DVBS2:
-		cnt  = 10; npow = 0; spow = 0;
-		while(cnt >0){
+		cnt  = M88RS6060_SNR_ITERATIONS; npow = 0; spow = 0;
+		while (cnt > 0) {
 			npow1 = m88rs6060_readreg(state, 0x8c) & 0xff;
 			msleep(2);
 			npow2 = m88rs6060_readreg(state, 0x8d) & 0xff;
@@ -503,28 +480,18 @@ static int m88rs6060_read_snr(struct dvb_frontend *fe, u16 *p_snr)
 			spow += ((spow1 * spow1) >> 1);
 			cnt--;
 		}
-		npow /= 10; spow /= 10;
-		if(spow == 0){
-			snr = 0;
-		}else if(npow == 0){
-			snr = 19;
-		}else{
-			if(spow > npow){
-				tmp = (u16)(spow / npow);
-				if (tmp > 80) tmp = 80;
-				snr = mes_log10[tmp - 1] * 4;
-			}else{
-				tmp = (u16)(npow / spow);
-				if (tmp > 80) tmp = 80;
-				snr = -(mes_log10[tmp - 1] / 1000);
-			}
+		npow /= M88RS6060_SNR_ITERATIONS; spow /= M88RS6060_SNR_ITERATIONS;
+		if (spow > npow) {
+			snr_total = spow / npow;
+			/* SNR <= 65535 */
+			snr = (u16)(div_u64((u64) 10000 * intlog10(snr_total), (1 << 24))) * (4 + state->kratio);
 		}
 		break;
 	default:
 		break;
 	}
 	*p_snr = snr;
-	msleep(10);
+	msleep(20);
 
 	return 0;
 }
@@ -565,7 +532,7 @@ static int m88rs6060_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
 	default:
 		break;
 	}
-	msleep(10);
+	msleep(20);
 
 	return 0;
 }
@@ -577,7 +544,7 @@ static int m88rs6060_set_tone(struct dvb_frontend *fe, fe_sec_tone_mode_t tone)
 
 	dprintk("%s(%d)\n", __func__, tone);
 	if ((tone != SEC_TONE_ON) && (tone != SEC_TONE_OFF)) {
-		printk(KERN_ERR "%s: Invalid, tone=%d\n", __func__, tone);
+		printk(KERN_ERR "%s: Invalid, tone = %d\n", __func__, tone);
 		return -EINVAL;
 	}
 
@@ -626,8 +593,8 @@ static int m88rs6060_send_diseqc_msg(struct dvb_frontend *fe,
 	tmp &= ~0x20;
 	m88rs6060_writereg(state, 0xa2, tmp);
 
-	for (i = 0; i < d->msg_len; i ++)
-		m88rs6060_writereg(state, (0xa3+i), d->msg[i]);
+	for (i = 0; i < d->msg_len; i++)
+		m88rs6060_writereg(state, (0xa3 + i), d->msg[i]);
 
 	tmp = m88rs6060_readreg(state, 0xa1);
 	tmp &= ~0x38;
@@ -637,14 +604,14 @@ static int m88rs6060_send_diseqc_msg(struct dvb_frontend *fe,
 	m88rs6060_writereg(state, 0xa1, tmp);
 	/* 1.5 * 9 * 8 = 108ms */
 	time_out = 150;
-	while (time_out > 0){
+	while (time_out > 0) {
 		msleep(10);
 		time_out -= 10;
 		tmp = m88rs6060_readreg(state, 0xa1);
 		if ((tmp & 0x40) == 0)
 			break;
 	}
-	if (time_out == 0){
+	if (time_out == 0) {
 		tmp = m88rs6060_readreg(state, 0xa1);
 		tmp &= ~0x80;
 		tmp |= 0x40;
@@ -662,7 +629,7 @@ static int m88rs6060_diseqc_send_burst(struct dvb_frontend *fe,
 					fe_sec_mini_cmd_t burst)
 {
 	struct m88rs6060_state *state = fe->demodulator_priv;
-	u8	val, time_out;
+	u8 val, time_out;
 
 	dprintk("%s()\n", __func__);
 
@@ -679,7 +646,7 @@ static int m88rs6060_diseqc_send_burst(struct dvb_frontend *fe,
 	msleep(13);
 
 	time_out = 5;
-	do{
+	do {
 		val = m88rs6060_readreg(state, 0xa1);
 		if ((val & 0x40) == 0)
 			break;
@@ -711,13 +678,13 @@ static int m88rs6060_check_id(struct m88rs6060_state *state)
 	val_00 = m88rs6060_readreg(state, 0x00);
 	val_01 = m88rs6060_readreg(state, 0x01);
 	val_02 = m88rs6060_readreg(state, 0x02);
-	printk(KERN_INFO "RS6060 chip, demod id=%x, version=%x.\n", val_00, (val_02 << 8 | val_01));
+	printk(KERN_INFO "RS6060 chip, demod id = %x, version = %x.\n", val_00, (val_02 << 8 | val_01));
 
 	val_01 = m88rs6060_tuner_readreg(state, 0x01);
-	printk(KERN_INFO "RS6060 chip, tuner id=%x.\n", val_01);
+	printk(KERN_INFO "RS6060 chip, tuner id = %x.\n", val_01);
 
 	state->demod_id = 0;
-	if(val_00 == 0xE2) {
+	if (val_00 == 0xe2) {
 		state->demod_id = RS6060_ID;
 	}
 
@@ -746,13 +713,14 @@ struct dvb_frontend *m88rs6060_attach(struct m88rs6060_config *config,
 	state->preBer = 0x0;
 	state->delivery_system = SYS_DVBS; /* Default set to DVB-S */
 	state->iMclkKHz = 96000;
-	
+	state->kratio = 0;
+
 	memcpy(&state->frontend.ops, &m88rs6060_ops,
 			sizeof(struct dvb_frontend_ops));
 	state->frontend.demodulator_priv = state;
 
 	/* check demod id */
-	if(m88rs6060_initilaze(&state->frontend)){
+	if (m88rs6060_initilaze(&state->frontend)) {
 		printk(KERN_ERR "Unable to find Montage RS6060.\n");
 		goto error3;
 	}
@@ -769,45 +737,44 @@ EXPORT_SYMBOL(m88rs6060_attach);
 static int m88rs6060_tuner_set_pll_freq(struct m88rs6060_state *state, u32 tuner_freq_MHz)
 {
 	u32 fcry_KHz, ulNDiv1, ulNDiv2;
-	u8  refDiv, ucLoDiv1, ucLomod1, ucLoDiv2, ucLomod2;
+	u8 refDiv, ucLoDiv1, ucLomod1, ucLoDiv2, ucLomod2;
 	u8 reg27, reg29, reg36, reg3d;
 
 	fcry_KHz = MT_FE_CRYSTAL_KHZ;
 	refDiv = 27;
 	reg36 = refDiv - 8;
 
-
-	if(tuner_freq_MHz >= 1550) {
+	if (tuner_freq_MHz >= 1550) {
 		ucLoDiv1 = 2;
 		ucLomod1 = 0;
 		ucLoDiv2 = 2;
 		ucLomod2 = 0;
-	} else if(tuner_freq_MHz >= 1380) {
+	} else if (tuner_freq_MHz >= 1380) {
 		ucLoDiv1 = 3;
 		ucLomod1 = 16;
 		ucLoDiv2 = 2;
 		ucLomod2 = 0;
-	} else if(tuner_freq_MHz >= 1070) {
+	} else if (tuner_freq_MHz >= 1070) {
 		ucLoDiv1 = 3;
 		ucLomod1 = 16;
 		ucLoDiv2 = 3;
 		ucLomod2 = 16;
-	} else if(tuner_freq_MHz >= 1000) {
+	} else if (tuner_freq_MHz >= 1000) {
 		ucLoDiv1 = 3;
 		ucLomod1 = 16;
 		ucLoDiv2 = 4;
 		ucLomod2 = 64;
-	} else if(tuner_freq_MHz >= 775) {
+	} else if (tuner_freq_MHz >= 775) {
 		ucLoDiv1 = 4;
 		ucLomod1 = 64;
 		ucLoDiv2 = 4;
 		ucLomod2 = 64;
-	} else if(tuner_freq_MHz >= 700) {
+	} else if (tuner_freq_MHz >= 700) {
 		ucLoDiv1 = 6;
 		ucLomod1 = 48;
 		ucLoDiv2 = 4;
 		ucLomod2 = 64;
-	} else if(tuner_freq_MHz >= 520) {
+	} else if (tuner_freq_MHz >= 520) {
 		ucLoDiv1 = 6;
 		ucLomod1 = 48;
 		ucLoDiv2 = 6;
@@ -822,17 +789,17 @@ static int m88rs6060_tuner_set_pll_freq(struct m88rs6060_state *state, u32 tuner
 	ulNDiv1 = ((tuner_freq_MHz * ucLoDiv1 * 1000) * refDiv / fcry_KHz - 1024) / 2;
 	ulNDiv2 = ((tuner_freq_MHz * ucLoDiv2 * 1000) * refDiv / fcry_KHz - 1024) / 2;
 
-	reg27 = (((ulNDiv1 >> 8) & 0x0F) + ucLomod1) & 0x7F;
+	reg27 = (((ulNDiv1 >> 8) & 0x0f) + ucLomod1) & 0x7f;
 	m88rs6060_tuner_writereg(state, 0x27, reg27);
-	m88rs6060_tuner_writereg(state, 0x28, (u8)(ulNDiv1 & 0xFF));
-	reg29 = (((ulNDiv2 >> 8) & 0x0F) + ucLomod2) & 0x7f;
+	m88rs6060_tuner_writereg(state, 0x28, (u8)(ulNDiv1 & 0xff));
+	reg29 = (((ulNDiv2 >> 8) & 0x0f) + ucLomod2) & 0x7f;
 	m88rs6060_tuner_writereg(state, 0x29, reg29);
-	m88rs6060_tuner_writereg(state, 0x2a, (u8)(ulNDiv2 & 0xFF));
+	m88rs6060_tuner_writereg(state, 0x2a, (u8)(ulNDiv2 & 0xff));
 
 	m88rs6060_tuner_writereg(state, 0x36, reg36);
 	m88rs6060_tuner_writereg(state, 0x39, reg36);
 
-	if(reg36 == 19) {
+	if (reg36 == 19) {
 		m88rs6060_tuner_writereg(state, 0x2c, 0x02);
 	} else {
 		m88rs6060_tuner_writereg(state, 0x2c, 0x00);
@@ -847,12 +814,19 @@ static int m88rs6060_tuner_set_pll_freq(struct m88rs6060_state *state, u32 tuner
 static int m88rs6060_tuner_set_bb(struct m88rs6060_state *state, u32 symbol_rate_KSs, s32 lpf_offset_KHz)
 {
 	u32 f3dB;
-	u8  reg40;
+	u8 reg40;
 
+	state->kratio = 0;
 	f3dB = symbol_rate_KSs * 9 / 14 + 2000;
 	f3dB += lpf_offset_KHz;
-	if(f3dB < 6000) f3dB = 6000;
-	if(f3dB > 43000) f3dB = 43000;
+	if (f3dB < 6000) {
+		f3dB = 6000;
+		state->kratio = 1;
+	}
+	if (f3dB > 43000) {
+		f3dB = 43000;
+		/* state->kratio = -1; */
+	}
 	reg40 = f3dB / 1000;
 	m88rs6060_tuner_writereg(state, 0x40, reg40);
 	return 0;
@@ -868,7 +842,7 @@ static int m88rs6060_set_carrier_offset(struct dvb_frontend *fe,
 	tmp = carrier_offset_khz;
 	tmp *= 65536;
 
-	tmp = (2*tmp + state->iMclkKHz) / (2*state->iMclkKHz);
+	tmp = (2 * tmp + state->iMclkKHz) / (2 * state->iMclkKHz);
 
 	if (tmp < 0)
 		tmp += 65536;
@@ -918,10 +892,10 @@ static int m88rs6060_set_CCI(struct dvb_frontend *fe)
 static int m88rs6060_init_reg(struct m88rs6060_state *state, const u8 *p_reg_tab, u32 size)
 {
 	u32 i;
-	
-	for(i = 0; i < size; i+=2)
-		m88rs6060_writereg(state, p_reg_tab[i], p_reg_tab[i+1]);
-		
+
+	for (i = 0; i < size; i += 2)
+		m88rs6060_writereg(state, p_reg_tab[i], p_reg_tab[i + 1]);
+
 	return 0;
 }
 
@@ -936,9 +910,9 @@ static int  m88rs6060_get_ts_mclk(struct m88rs6060_state *state, u32 *p_MCLK_KHz
 
 	reg15 = m88rs6060_tuner_readreg(state, 0x15);
 	reg16 = m88rs6060_tuner_readreg(state, 0x16);
-	reg1D = m88rs6060_tuner_readreg(state, 0x1D);
-	reg1E = m88rs6060_tuner_readreg(state, 0x1E);
-	reg1F = m88rs6060_tuner_readreg(state, 0x1F);
+	reg1D = m88rs6060_tuner_readreg(state, 0x1d);
+	reg1E = m88rs6060_tuner_readreg(state, 0x1e);
+	reg1F = m88rs6060_tuner_readreg(state, 0x1f);
 
 	pll_ldpc_mode = (reg15 >> 1) & 0x01;
 
@@ -952,15 +926,15 @@ static int  m88rs6060_get_ts_mclk(struct m88rs6060_state *state, u32 *p_MCLK_KHz
 
 	sm = reg1D & 0x03;
 
-	f3 = (reg1E >> 4) & 0x0F;
-	f2 = reg1E & 0x0F;
-	f1 = (reg1F >> 4) & 0x0F;
-	f0 = reg1F & 0x0F;
+	f3 = (reg1E >> 4) & 0x0f;
+	f2 = reg1E & 0x0f;
+	f1 = (reg1F >> 4) & 0x0f;
+	f0 = reg1F & 0x0f;
 
-	if(f3 == 0) f3 = 16;
-	if(f2 == 0) f2 = 16;
-	if(f1 == 0) f1 = 16;
-	if(f0 == 0) f0 = 16;
+	if (f3 == 0) f3 = 16;
+	if (f2 == 0) f2 = 16;
+	if (f1 == 0) f1 = 16;
+	if (f0 == 0) f0 = 16;
 
 	N = f2 + f1;
 
@@ -982,7 +956,7 @@ static int  m88rs6060_get_ts_mclk(struct m88rs6060_state *state, u32 *p_MCLK_KHz
 	MCLK_KHz /= N;
 	*p_MCLK_KHz = MCLK_KHz;
 
-	dprintk("%s(), mclk=%d.\n", __func__, MCLK_KHz);
+	dprintk("%s(), mclk = %d.\n", __func__, MCLK_KHz);
 
 	return 0;
 }
@@ -994,12 +968,12 @@ static int  m88rs6060_set_ts_mclk(struct m88rs6060_state *state, u32 MCLK_KHz, u
 	u16 pll_div_fb, N;
 	u32 div;
 
-	dprintk("%s(), mclk=%d, symbol rate=%d KSs.\n", __func__, MCLK_KHz, iSymRateKSs);
+	dprintk("%s(), mclk = %d, symbol rate = %d KSs.\n", __func__, MCLK_KHz, iSymRateKSs);
 
 	reg15 = m88rs6060_tuner_readreg(state, 0x15);
 	reg16 = m88rs6060_tuner_readreg(state, 0x16);
 
-	if(state->config->ts_mode == 0) {
+	if (state->config->ts_mode == 0) {
 		if(reg16 == 92)
 			tmp = 93;
 		else if (reg16 == 100)
@@ -1017,7 +991,7 @@ static int  m88rs6060_set_ts_mclk(struct m88rs6060_state *state, u32 MCLK_KHz, u
 	div = 9000 * pll_div_fb * 4;
 	div /= MCLK_KHz;
 
-	if(div <= 32) {
+	if (div <= 32) {
 		N = 2;
 		f0 = 0;
 		f1 = div / N;
@@ -1043,7 +1017,7 @@ static int  m88rs6060_set_ts_mclk(struct m88rs6060_state *state, u32 MCLK_KHz, u
 		f3 = 16;
 	}
 
-	if(state->config->ts_mode == 1) {
+	if (state->config->ts_mode == 1) {
 		if(f0 == 16)
 			f0 = 0;
 		else if((f0 < 8) && (f0 != 0))
@@ -1064,24 +1038,24 @@ static int  m88rs6060_set_ts_mclk(struct m88rs6060_state *state, u32 MCLK_KHz, u
 		else if((f3 < 8) && (f3 != 0))
 			f3 = 8;
 	} else {
-		if(f0 == 16)
+		if (f0 == 16)
 			f0 = 0;
-		else if((f0 < 9) && (f0 != 0))
+		else if ((f0 < 9) && (f0 != 0))
 			f0 = 9;
 
-		if(f1 == 16)
+		if (f1 == 16)
 			f1 = 0;
-		else if((f1 < 9) && (f1 != 0))
+		else if ((f1 < 9) && (f1 != 0))
 			f1 = 9;
 
-		if(f2 == 16)
+		if (f2 == 16)
 			f2 = 0;
-		else if((f2 < 9) && (f2 != 0))
+		else if ((f2 < 9) && (f2 != 0))
 			f2 = 9;
 
-		if(f3 == 16)
+		if (f3 == 16)
 			f3 = 0;
-		else if((f3 < 9) && (f3 != 0))
+		else if ((f3 < 9) && (f3 != 0))
 			f3 = 9;
 	}
 
@@ -1104,17 +1078,17 @@ static int  m88rs6060_set_ts_mclk(struct m88rs6060_state *state, u32 MCLK_KHz, u
 			m88rs6060_writereg(state, 0xa0, 0x44);
 			break;
 	}
-	reg1D = m88rs6060_tuner_readreg(state, 0x1D);
+	reg1D = m88rs6060_tuner_readreg(state, 0x1d);
 
 	sm = N - 1;
 	reg1D &= ~0x03;
 	reg1D |= sm;
-	reg1E = ((f3 << 4) + f2) & 0xFF;
-	reg1F = ((f1 << 4) + f0) & 0xFF;
+	reg1E = ((f3 << 4) + f2) & 0xff;
+	reg1F = ((f1 << 4) + f0) & 0xff;
 
-	m88rs6060_tuner_writereg(state, 0x1D, reg1D);
-	m88rs6060_tuner_writereg(state, 0x1E, reg1E);
-	m88rs6060_tuner_writereg(state, 0x1F, reg1F);
+	m88rs6060_tuner_writereg(state, 0x1d, reg1D);
+	m88rs6060_tuner_writereg(state, 0x1e, reg1E);
+	m88rs6060_tuner_writereg(state, 0x1f, reg1F);
 	msleep(5);
 
 	return 0;
@@ -1134,13 +1108,13 @@ static int  m88rs6060_set_ts_divide_ratio(struct m88rs6060_state *state, u8 dr_h
 	tmp2 &= 0x3f;
 
 	val = m88rs6060_readreg(state, 0xfe);
-	val &= 0xF0;
+	val &= 0xf0;
 	val |= (tmp1 >> 2) & 0x0f;
 	m88rs6060_writereg(state, 0xfe, val);
 
 	val = (u8)((tmp1 & 0x03) << 6);
 	val |= tmp2;
-	if(state->delivery_system == SYS_DVBS)
+	if (state->delivery_system == SYS_DVBS)
 		val |= 0xc8;
 	m88rs6060_writereg(state, 0xea, val);
 
@@ -1173,13 +1147,13 @@ static int m88rs6060_demod_connect(struct dvb_frontend *fe, s32 carrier_offset_k
 		target_mclk = 96000;
 		break;
 	case SYS_DVBS2:
-		if(state->config->ts_mode == 1) {
+		if (state->config->ts_mode == 1) {
 			target_mclk = 96000;
 		} else {
 			target_mclk = 144000;
 		}
 
-		if((c->symbol_rate / 1000 ) <= 5000) {
+		if ((c->symbol_rate / 1000 ) <= 5000) {
 			m88rs6060_writereg(state, 0xc0, 0x04);
 			m88rs6060_writereg(state, 0x8a, 0x09);
 			m88rs6060_writereg(state, 0x8b, 0x22);
@@ -1191,7 +1165,7 @@ static int m88rs6060_demod_connect(struct dvb_frontend *fe, s32 carrier_offset_k
 	}
 
 	/* set ts clock */
-	if(state->config->ci_mode == 0)
+	if (state->config->ci_mode == 0)
 		ts_clk = 16000;
 	else
 		ts_clk = 8000;
@@ -1206,24 +1180,24 @@ static int m88rs6060_demod_connect(struct dvb_frontend *fe, s32 carrier_offset_k
 	m88rs6060_get_ts_mclk(state, &target_mclk);
 
 	divide_ratio = (target_mclk + ts_clk - 1) / ts_clk;
-	if(divide_ratio > 128)
+	if (divide_ratio > 128)
 		divide_ratio = 128;
-	if(divide_ratio < 2)
+	if (divide_ratio < 2)
 		divide_ratio = 2;
 	tmp1 = (u8)(divide_ratio / 2);
 	tmp2 = (u8)(divide_ratio / 2);
-	if((divide_ratio % 2) != 0)
+	if ((divide_ratio % 2) != 0)
 		tmp2 += 1;
 
 	m88rs6060_set_ts_divide_ratio(state, tmp1, tmp2);
 
 	/* set ts pins */
-	if(state->config->ci_mode){
-		if(state->config->ci_mode == 2)
+	if (state->config->ci_mode) {
+		if (state->config->ci_mode == 2)
 			tmp = 0x43;
 		else
 			tmp = 0x03;
-	} else if(state->config->ts_mode)
+	} else if (state->config->ts_mode)
 		tmp = 0x06;
 	else
 		tmp = 0x42;
@@ -1231,26 +1205,24 @@ static int m88rs6060_demod_connect(struct dvb_frontend *fe, s32 carrier_offset_k
 
 	/* set others */
 	tmp = m88rs6060_readreg(state, 0xca);
-	tmp &= 0xFE;
+	tmp &= 0xfe;
 	tmp |= (m88rs6060_readreg(state, 0xca) >> 3) & 0x01;
 	m88rs6060_writereg(state, 0xca, tmp);
 	m88rs6060_writereg(state, 0xf9, 0x01);
 
-	m88rs6060_writereg(state, 0x33, 0x99);
+	m88rs6060_writereg(state, 0xc9, 0x08 | m88rs6060_readreg(state, 0xc9));
 
-	m88rs6060_writereg(state, 0xC9, 0x08 | m88rs6060_readreg(state, 0xC9));
-
-	if ((c->symbol_rate / 1000) <= 3000){
+	if ((c->symbol_rate / 1000) <= 3000) {
 		m88rs6060_writereg(state, 0xc3, 0x08); /* 8 * 32 * 100 / 64 = 400 */
 		m88rs6060_writereg(state, 0xc8, 0x20);
 		m88rs6060_writereg(state, 0xc4, 0x08); /* 8 * 0 * 100 / 128 = 0 */
 		m88rs6060_writereg(state, 0xc7, 0x00);
-	}else if((c->symbol_rate / 1000) <= 10000){
+	} else if ((c->symbol_rate / 1000) <= 10000) {
 		m88rs6060_writereg(state, 0xc3, 0x08); /* 8 * 16 * 100 / 64 = 200 */
 		m88rs6060_writereg(state, 0xc8, 0x10);
 		m88rs6060_writereg(state, 0xc4, 0x08); /* 8 * 0 * 100 / 128 = 0 */
 		m88rs6060_writereg(state, 0xc7, 0x00);
-	}else{
+	} else {
 		m88rs6060_writereg(state, 0xc3, 0x08); /* 8 * 6 * 100 / 64 = 75 */
 		m88rs6060_writereg(state, 0xc8, 0x06);
 		m88rs6060_writereg(state, 0xc4, 0x08); /* 8 * 0 * 100 / 128 = 0 */
@@ -1286,25 +1258,25 @@ static int m88rs6060_demod_connect(struct dvb_frontend *fe, s32 carrier_offset_k
 
 static int  m88rs6060_select_mclk(struct m88rs6060_state *state, u32 tuner_freq_MHz, u32 iSymRateKSs)
 {
-	u32 adc_Freq_MHz[3] = {96, 93, 99};
-	u8  reg16_list[3] = {96, 92, 100}, reg16, reg15;
+	u32 adc_Freq_MHz[3] = { 96, 93, 99 };
+	u8 reg16_list[3] =  {96, 92, 100 }, reg16, reg15;
 	u32 offset_MHz[3];
 	u32 max_offset = 0;
 	u8 i;
 	u8 big_symbol = (iSymRateKSs > 45010) ? 1 : 0;
 
-	if(big_symbol) {
+	if (big_symbol) {
 		reg16 = 115;
 		state->iMclkKHz = 110250;
 	} else {
 		reg16 = 96;
-		for(i = 0; i < 3; i++) {
+		for (i = 0; i < 3; i++) {
 			offset_MHz[i] = tuner_freq_MHz % adc_Freq_MHz[i];
 
-			if(offset_MHz[i] > (adc_Freq_MHz[i] / 2))
+			if (offset_MHz[i] > (adc_Freq_MHz[i] / 2))
 				offset_MHz[i] = adc_Freq_MHz[i] - offset_MHz[i];
 
-			if(offset_MHz[i] > max_offset) {
+			if (offset_MHz[i] > max_offset) {
 				max_offset = offset_MHz[i];
 				reg16 = reg16_list[i];
 				state->iMclkKHz = adc_Freq_MHz[i] * 1000;
@@ -1312,7 +1284,7 @@ static int  m88rs6060_select_mclk(struct m88rs6060_state *state, u32 tuner_freq_
 		}
 	}
 	reg15 = m88rs6060_tuner_readreg(state, 0x15);
-	if(big_symbol)
+	if (big_symbol)
 		reg15 |= 0x02;
 	else
 		reg15 &= ~0x02;
@@ -1327,12 +1299,11 @@ static int m88rs6060_set_frontend(struct dvb_frontend *fe)
 {
 	struct m88rs6060_state *state = fe->demodulator_priv;
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
-
-	int i;
 	u32 target_mclk = 144000;
 	s32 lpf_offset_KHz;
 	u32 realFreq, freq_MHz;
 	fe_status_t status;
+	int i;
 
 	dprintk("%s() ", __func__);
 	dprintk("c frequency = %d KHz\n", c->frequency);
@@ -1340,7 +1311,7 @@ static int m88rs6060_set_frontend(struct dvb_frontend *fe)
 	dprintk("delivery system = %d\n", c->delivery_system);
 
 	state->delivery_system = c->delivery_system;
-	if( state->delivery_system == SYS_DVBS )
+	if (state->delivery_system == SYS_DVBS )
 		target_mclk = 96000;
 
 	realFreq = c->frequency;
@@ -1392,7 +1363,7 @@ static int m88rs6060_set_frontend(struct dvb_frontend *fe)
 
 	state->delivery_system = c->delivery_system;
 
-	if (status & FE_HAS_LOCK){
+	if (status & FE_HAS_LOCK) {
 		if (state->config->set_ts_params)
 			state->config->set_ts_params(fe, 0);
 	}
@@ -1487,9 +1458,11 @@ static int m88rs6060_initilaze(struct dvb_frontend *fe)
 
 	state->tuner_addr = 0x2c;
 
-	if(m88rs6060_check_id(state) != RS6060_ID)
+	if (m88rs6060_check_id(state) != RS6060_ID)
 		return 1;
 
+	m88rs6060_initfe(fe);
+	msleep(1);
 	m88rs6060_tuner_writereg(state, 0x04, 0x01);
 	m88rs6060_tuner_writereg(state, 0x04, 0x00);
 
@@ -1506,37 +1479,36 @@ static int m88rs6060_initilaze(struct dvb_frontend *fe)
 	m88rs6060_writereg(state, 0x08, 0x01 | m88rs6060_readreg(state, 0x08));
 	msleep(1);
 
-	m88rs6060_tuner_writereg(state, 0x15, 0x6C);
-	m88rs6060_tuner_writereg(state, 0x2b, 0x1E);
-	m88rs6060_tuner_writereg(state, 0x10, 0xFB);
+	m88rs6060_tuner_writereg(state, 0x15, 0x6c);
+	m88rs6060_tuner_writereg(state, 0x2b, 0x1e);
+	m88rs6060_tuner_writereg(state, 0x10, 0xfb);
 	m88rs6060_tuner_writereg(state, 0x11, 0x01);
-	m88rs6060_tuner_writereg(state, 0x07, 0x7D);
+	m88rs6060_tuner_writereg(state, 0x07, 0x7d);
 	m88rs6060_tuner_writereg(state, 0x24, 0x04);
 	m88rs6060_tuner_writereg(state, 0x6e, 0x39);
 	m88rs6060_tuner_writereg(state, 0x83, 0x01);
 	m88rs6060_tuner_writereg(state, 0x70, 0x90);
-	m88rs6060_tuner_writereg(state, 0x71, 0xF0);
-	m88rs6060_tuner_writereg(state, 0x72, 0xB6);
-	m88rs6060_tuner_writereg(state, 0x73, 0xEB);
-	m88rs6060_tuner_writereg(state, 0x74, 0x6F);
-	m88rs6060_tuner_writereg(state, 0x75, 0xFC);
+	m88rs6060_tuner_writereg(state, 0x71, 0xf0);
+	m88rs6060_tuner_writereg(state, 0x72, 0xb6);
+	m88rs6060_tuner_writereg(state, 0x73, 0xeb);
+	m88rs6060_tuner_writereg(state, 0x74, 0x6f);
+	m88rs6060_tuner_writereg(state, 0x75, 0xfc);
 
 	/* demod reset.*/
-	m88rs6060_writereg(state, 0x07, 0xE0);
+	m88rs6060_writereg(state, 0x07, 0xe0);
 	m88rs6060_writereg(state, 0x07, 0x00);
 
 	/* Load the firmware if required */
-	if(!val)
-	{
+	if (!val) {
 		ret = m88rs6060_load_firmware(fe);
-		if (ret != 0){
+		if (ret != 0) {
 			printk(KERN_ERR "%s: Unable download firmware\n", __func__);
 			return ret;
 		}
 	}
 
 	val = m88rs6060_readreg(state, 0x0b);
-	if(val == 0x01)
+	if (val == 0x01)
 		m88rs6060_writereg(state, 0x0b, 0x00);
 
 	val = m88rs6060_readreg(state, 0xfd);
@@ -1578,10 +1550,8 @@ static struct dvb_frontend_ops m88rs6060_ops = {
 	},
 
 	.release = m88rs6060_release,
-
 	.init = m88rs6060_initfe,
 	.sleep = m88rs6060_sleep,
-
 	.read_status = m88rs6060_read_status,
 	.read_ber = m88rs6060_read_ber,
 	.read_signal_strength = m88rs6060_read_signal_strength,

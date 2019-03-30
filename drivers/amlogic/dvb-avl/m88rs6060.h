@@ -32,6 +32,7 @@ struct m88rs6060_config {
 	u8 ci_mode; /* 0: no ci, others: ci mode */
 	u8 ts_mode; /* 0: Parallel, 1: Serial */
 	u8 tuner_readstops;
+	u8 name_ext_fw[64]; /* Name external firmware for demodulator */
 	/* Set device param to start dma */
 	int (*set_ts_params)(struct dvb_frontend *fe, int is_punctured);
 	/* Set LNB voltage */
